@@ -1,144 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AntFarm</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AntFarm</title>
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <div class="brand">
+          <span class="brand-mark">🐜</span>
+          <div class="brand-text">
+            <span class="brand-title">AntFarm</span>
+            <span class="brand-sub">a living sandbox</span>
+          </div>
+        </div>
+        <div id="transport" class="topbar-group"></div>
+        <div id="readout" class="topbar-group"></div>
+      </header>
 
-    body {
-      background: #0d0d1a;
-      color: #ccc;
-      font-family: 'Courier New', monospace;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
-      overflow-x: hidden;
-    }
+      <div id="workspace">
+        <aside id="palette"></aside>
+        <main id="stage"></main>
+      </div>
 
-    h1 {
-      font-size: 1.4rem;
-      color: #e8d5b0;
-      margin: 12px 0 4px;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-    }
-
-    #info {
-      font-size: 0.75rem;
-      color: #888;
-      margin-bottom: 8px;
-      height: 16px;
-    }
-
-    #game-container {
-      position: relative;
-      border: 2px solid #333;
-      border-radius: 4px;
-      overflow: hidden;
-      background: #1a1a2e;
-    }
-
-    #game {
-      display: block;
-      cursor: crosshair;
-      image-rendering: pixelated;
-      width: 800px;
-      height: 600px;
-    }
-
-    #toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      padding: 10px 16px;
-      margin-top: 8px;
-      background: #151520;
-      border: 1px solid #2a2a3a;
-      border-radius: 6px;
-      max-width: 810px;
-      width: 100%;
-      align-items: flex-start;
-    }
-
-    .tool-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      align-items: center;
-    }
-
-    .group-label {
-      font-size: 0.65rem;
-      color: #666;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      width: 100%;
-      margin-bottom: 2px;
-    }
-
-    .tool-btn {
-      background: #1e1e30;
-      border: 1px solid #333;
-      color: #bbb;
-      padding: 5px 10px;
-      font-size: 0.75rem;
-      font-family: 'Courier New', monospace;
-      cursor: pointer;
-      border-radius: 3px;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      transition: background 0.15s, border-color 0.15s;
-    }
-
-    .tool-btn:hover {
-      background: #2a2a40;
-      border-color: #555;
-    }
-
-    .tool-btn.active {
-      background: #2a2a50;
-      border-color: #667;
-      color: #fff;
-    }
-
-    .color-swatch {
-      display: inline-block;
-      width: 12px;
-      height: 12px;
-      border-radius: 2px;
-    }
-
-    .key-hint {
-      font-size: 0.6rem;
-      color: #555;
-      margin-left: 2px;
-    }
-
-    .brush-slider {
-      width: 80px;
-      accent-color: #667;
-    }
-
-    .control-btn {
-      padding: 5px 8px;
-    }
-  </style>
-</head>
-<body>
-  <h1>AntFarm</h1>
-  <div id="info"></div>
-  <div id="game-container">
-    <canvas id="game"></canvas>
-  </div>
-  <div id="toolbar"></div>
-  <script type="module" src="src/main.js"></script>
-</body>
+      <footer id="statusbar"></footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

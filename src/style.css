@@ -1,0 +1,241 @@
+:root {
+  --bg: #0a0a10;
+  --panel: #12121a;
+  --panel-2: #171722;
+  --border: #2a2a3a;
+  --border-strong: #3a3a4e;
+  --text: #cfcfda;
+  --text-dim: #8a8a99;
+  --text-faint: #5a5a68;
+  --accent: #e8b04a;
+  --accent-soft: #e8d5b0;
+  --active: #2a2a50;
+  --active-border: #6a6a99;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', ui-monospace, monospace;
+  overflow: hidden;
+}
+
+#app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+}
+
+/* ---------- Top bar ---------- */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--accent-soft);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.brand-sub {
+  font-size: 0.62rem;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+}
+
+.topbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#readout {
+  margin-left: auto;
+  gap: 18px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.stat-value {
+  font-size: 0.95rem;
+  color: var(--accent-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Workspace ---------- */
+#workspace {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  overflow: hidden;
+}
+
+#palette {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px 12px 24px;
+}
+
+.group {
+  margin-bottom: 16px;
+}
+
+.group-label {
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin-bottom: 6px;
+}
+
+.group-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+#stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: var(--bg);
+  background-image: radial-gradient(circle at center, #12121c 0%, #07070c 100%);
+}
+
+#stage canvas {
+  display: block;
+  image-rendering: pixelated;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  cursor: crosshair;
+}
+
+/* ---------- Bottom bar ---------- */
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.bar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bar-group > .group-label {
+  margin-bottom: 0;
+  margin-right: 4px;
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 10px;
+  font-size: 0.72rem;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+  user-select: none;
+}
+
+.btn:hover {
+  background: #22222f;
+  border-color: var(--border-strong);
+}
+
+.btn.active {
+  background: var(--active);
+  border-color: var(--active-border);
+  color: #fff;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.key-hint {
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+
+.brush-slider {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+.brush-value {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  min-width: 1.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
