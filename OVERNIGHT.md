@@ -18,9 +18,17 @@ Look work may start only after CORE PASS. KEEP a param change only if ADAPTATION
 - Terrain: height map + surface depth-shading + sculpt brush (Phase 1); mound
   formation from real dig volume, not a flat roll (Phase 2)
 - Underground: cell-associated grid (SOLID/TUNNEL/CHAMBER/ENTRANCE, depth,
-  owner) with shift-based descend/dig/surface behavior (Phase 3). No render
-  yet — Phase 4 (U-key cross-section view) and Phase 5 (species-specific
-  architecture beyond the chamber-density heuristic) are still open.
+  owner) with shift-based descend/dig/surface behavior (Phase 3). U-key
+  museum cross-section view renders it — surface peeled away, tunnels/
+  chambers colored by owner and shaded by depth, surface and underground
+  ants no longer double-render on each other's layer (Phase 4).
+- Ant size asymmetry (harvester large/individual, fire ant tiny/swarm) is
+  already there via per-species sprite scale — Phase 6 reads as done without
+  a dedicated pass.
+- Still open: Phase 5 (harvester helical shaft + stratified chambers + seed
+  wave — right now both species dig the same random-branch-with-density-
+  chamber algorithm, just at different rates) and Phase 7 (flood response /
+  raft formation).
 - Look: vapor on by default, top-down walk/carry from Deposit, Scent/Erase/transport copy
 - Persistence: localStorage save/load, auto-save every 500 ticks
 - CI: GitHub Actions runs typecheck + eval on every push to main
