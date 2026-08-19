@@ -836,7 +836,7 @@ export function formatReport(r: EvalReport): string {
       ? `CHOKE: ${yn(r.chokepoint.pass)} — ${r.chokepoint.corridorCells}-cell slot; first through ${r.chokepoint.firstThrough ?? 'never'} ticks; ${r.chokepoint.transits} cell-visits; delivered ${r.chokepoint.delivered.toFixed(1)}; slot trail ${r.chokepoint.corridorTrail.toFixed(1)}${r.chokepoint.notes.length ? ' — ' + r.chokepoint.notes.join('; ') : ''}`
       : '',
     r.soak
-      ? `SOAK:${yn(r.soak.pass)} — ${(r.soak.ticks / 1000).toFixed(0)}k ticks; ants ${r.soak.minAnts}..${r.soak.maxAnts} → ${r.soak.endAnts}; granary ${r.soak.minStore.toFixed(2)}..${r.soak.maxStore.toFixed(2)} of ${r.soak.granaryCeiling.toFixed(0)}; food left ${r.soak.foodLeft.toFixed(0)}; ${r.soak.nonFiniteCells} non-finite${r.soak.notes.length ? ' — ' + r.soak.notes.join('; ') : ''}`
+      ? `SOAK: ${yn(r.soak.pass)} — ${(r.soak.ticks / 1000).toFixed(0)}k ticks; ants ${r.soak.minAnts}..${r.soak.maxAnts} → ${r.soak.endAnts}; granary ${r.soak.minStore.toFixed(2)}..${r.soak.maxStore.toFixed(2)} of ${r.soak.granaryCeiling.toFixed(0)}; food left ${r.soak.foodLeft.toFixed(0)}; ${r.soak.nonFiniteCells} non-finite${r.soak.notes.length ? ' — ' + r.soak.notes.join('; ') : ''}`
       : '',
   ]
     .filter((line) => line !== '')
