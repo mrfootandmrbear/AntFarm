@@ -1,9 +1,9 @@
-import { Cell, CellType } from '../sim/constants';
+import { Cell, CellType, SimConfig } from '../sim/constants';
 import { saveWorld } from '../save/SaveStore';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { PixiRenderer } from '../render/PixiRenderer';
 
-type ToolKind = 'cell' | 'ant' | 'fireant' | 'lizard';
+type ToolKind = 'cell' | 'ant' | 'fireant' | 'lizard' | 'sculpt';
 
 interface Tool {
   id: string;
@@ -14,12 +14,16 @@ interface Tool {
   kind: ToolKind;
   cell?: CellType;
   icon: string;
+  /** Sculpt tools only: sign of the height change under the brush. */
+  sculpt?: number;
 }
 
 const TOOLS: Tool[] = [
   { id: 'erase', label: 'Bare soil', color: '#9c7748', key: '0', category: 'Ground', kind: 'cell', cell: Cell.DIRT, icon: '◌' },
   { id: 'rock', label: 'Rock', color: '#69645b', key: '1', category: 'Ground', kind: 'cell', cell: Cell.WALL, icon: '◆' },
   { id: 'water', label: 'Water', color: '#3c91b9', key: '2', category: 'Ground', kind: 'cell', cell: Cell.WATER, icon: '≈' },
+  { id: 'raise', label: 'Pile up', color: '#c19a5e', key: '9', category: 'Shape', kind: 'sculpt', sculpt: 1, icon: '▲' },
+  { id: 'lower', label: 'Scoop out', color: '#6f5836', key: '-', category: 'Shape', kind: 'sculpt', sculpt: -1, icon: '▼' },
   { id: 'food', label: 'Food', color: '#64a643', key: '3', category: 'Life', kind: 'cell', cell: Cell.FOOD, icon: '✿' },
   { id: 'nest', label: 'Ant nest', color: '#a45f38', key: '4', category: 'Homes', kind: 'cell', cell: Cell.NEST, icon: '⌂' },
   { id: 'firenest', label: 'Fire nest', color: '#713522', key: '5', category: 'Homes', kind: 'cell', cell: Cell.FIRE_NEST, icon: '⌂' },
@@ -28,7 +32,7 @@ const TOOLS: Tool[] = [
   { id: 'lizard', label: 'Lizard', color: '#b08958', key: '8', category: 'Creatures', kind: 'lizard', icon: '⌁' },
 ];
 
-const CATEGORY_ORDER = ['Ground', 'Life', 'Homes', 'Creatures'];
+const CATEGORY_ORDER = ['Ground', 'Shape', 'Life', 'Homes', 'Creatures'];
 
 export class UI {
   private engine: SimulationEngine;
@@ -322,12 +326,21 @@ export class UI {
     const r = this.brushSize;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        if (dx * dx + dy * dy > r * r) continue;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r * r) continue;
         const x = gx + dx;
         const y = gy + dy;
         if (!world.inBounds(x, y)) continue;
 
-        if (this.selected.kind === 'fireant') {
+        if (this.selected.kind === 'sculpt') {
+          // Radial falloff, so a drag leaves a rounded ridge instead of a plateau.
+          const falloff = 1 - Math.sqrt(d2) / (r + 1);
+          world.raiseHeight(
+            x,
+            y,
+            this.selected.sculpt! * SimConfig.terrain.sculptStep * falloff,
+          );
+        } else if (this.selected.kind === 'fireant') {
           this.engine.spawnFireAntAt(x, y);
         } else if (this.selected.kind === 'ant') {
           this.engine.spawnAntAt(x, y);

@@ -10,6 +10,19 @@ export const AntState = {
 export type AntStateType = (typeof AntState)[keyof typeof AntState];
 
 /**
+ * How much an ant likes a step that changes its elevation by `dh`.
+ *
+ * Flat ground returns exactly 1, so multiplying a movement weight by this on a
+ * world with no relief leaves the weight — and therefore every RNG draw that
+ * follows — bit-for-bit unchanged.
+ */
+function slopeFactor(dh: number): number {
+  const cfg = SimConfig.terrain;
+  if (dh <= 0) return 1 + cfg.downhillGain * -dh;
+  return 1 / (1 + cfg.uphillCost * dh);
+}
+
+/**
  * A single ant. Pure agent logic operating on the {@link World}: it follows
  * pheromone gradients, picks up food, returns it to the nest, and digs through
  * dirt when boxed in. Rendering lives entirely in the renderer.
@@ -162,6 +175,8 @@ export class Ant {
     }
 
     const candidates: { idx: number; nx: number; ny: number; weight: number }[] = [];
+    const height = world.heightMap;
+    const hHere = height[world.idx(this.x, this.y)];
 
     for (let dirIdx = 0; dirIdx < 8; dirIdx++) {
       const d = DIRS[dirIdx];
@@ -179,7 +194,8 @@ export class Ant {
       if (isSearching && targetCell === Cell.FOOD) targetPull = 80;
       if (!isSearching && targetCell === this.nestCell) targetPull = 80;
 
-      const weight = (pheromone * 6 + 0.1) * forwardBias + targetPull;
+      const weight =
+        ((pheromone * 6 + 0.1) * forwardBias + targetPull) * slopeFactor(height[ni] - hHere);
       candidates.push({ idx: dirIdx, nx, ny, weight });
     }
 

@@ -15,6 +15,14 @@ export class World {
   cells: Uint8Array;
   /** Remaining food fraction (0..1) for FOOD cells. */
   foodAmount: Float32Array;
+  /**
+   * Surface relief per cell, 0.0 = the original flat ground. Positive is raised
+   * (a mound), negative is a hollow. Ants pay to climb it and the renderer shades
+   * it; nothing about passability depends on it.
+   */
+  heightMap: Float32Array;
+  /** True once any cell has been raised or lowered — lets flat worlds skip work. */
+  hasRelief = false;
 
   /** Trail back toward the nest (laid by searching ants). */
   readonly homeField: DiffusingField;
@@ -50,6 +58,7 @@ export class World {
     this.cells = new Uint8Array(size);
     this.cells.fill(Cell.DIRT);
     this.foodAmount = new Float32Array(size);
+    this.heightMap = new Float32Array(size);
     this.blocked = new Uint8Array(size);
     this.seed = seed;
     this.rng = new Rng(seed);
@@ -70,6 +79,8 @@ export class World {
   clear(): void {
     this.cells.fill(Cell.DIRT);
     this.foodAmount.fill(0);
+    this.heightMap.fill(0);
+    this.hasRelief = false;
     this.blocked.fill(0);
     this.homeField.clear();
     this.foodField.clear();
@@ -135,6 +146,32 @@ export class World {
     this.cells[i] = type;
     this.foodAmount[i] = type === Cell.FOOD ? 1.0 : 0;
     this.blocked[i] = type === Cell.WALL || type === Cell.WATER ? 1 : 0;
+  }
+
+  /** Surface height at (x, y). Out of bounds reads as flat ground. */
+  heightAt(x: number, y: number): number {
+    if (!this.inBounds(x, y)) return 0;
+    return this.heightMap[this.idx(x, y)];
+  }
+
+  /**
+   * Raise (or lower, with a negative delta) the ground at one cell.
+   * Returns the height actually applied, which is less than `delta` once the
+   * cell has hit the ceiling — callers that move soil use that to know whether
+   * the pellet went anywhere.
+   */
+  raiseHeight(x: number, y: number, delta: number): number {
+    if (!this.inBounds(x, y) || delta === 0) return 0;
+    const cfg = SimConfig.terrain;
+    const i = this.idx(x, y);
+    const before = this.heightMap[i];
+    let after = before + delta;
+    if (after > cfg.maxHeight) after = cfg.maxHeight;
+    else if (after < cfg.minHeight) after = cfg.minHeight;
+    if (after === before) return 0;
+    this.heightMap[i] = after;
+    this.hasRelief = true;
+    return after - before;
   }
 
   isPassable(x: number, y: number): boolean {

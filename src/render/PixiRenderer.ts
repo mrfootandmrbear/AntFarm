@@ -148,6 +148,8 @@ export class PixiRenderer {
     const buf = this.terrainBuf;
     const noiseArr = this.cellNoise;
     const tick = world.tickCount;
+    const height = world.heightMap;
+    const relief = world.hasRelief;
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -206,6 +208,22 @@ export class PixiRenderer {
             r = 0;
             g = 0;
             b = 0;
+        }
+
+        // Relief: raised ground catches the light, hollows sit in shadow, and a
+        // slope facing the (fixed, upper-left) sun gets a rim of highlight so a
+        // dome reads as a dome rather than a bright disc.
+        if (relief) {
+          const hHere = height[i];
+          const dhx = (x + 1 < w ? height[i + 1] : hHere) - hHere;
+          const dhy = (y + 1 < h ? height[i + w] : hHere) - hHere;
+          let slope = (dhx + dhy) * 3.4;
+          if (slope > 0.34) slope = 0.34;
+          else if (slope < -0.34) slope = -0.34;
+          const lit = 1 + hHere * 0.2 + slope;
+          r *= lit;
+          g *= lit;
+          b *= lit;
         }
 
         const p = i << 2;

@@ -106,6 +106,25 @@ export const SimConfig = {
     swarmDamage: 0.003,
     maxLizards: 12,
   },
+  /**
+   * Surface relief. Height is stored per cell in world units where 1.0 reads as
+   * "a mature fire-ant mound" — tall enough to see, small enough that an ant can
+   * still climb it. Negative height is a scrape or a puddle basin.
+   */
+  terrain: {
+    maxHeight: 1.2,
+    minHeight: -0.7,
+    /** Height added/removed per sculpt paint step at the brush centre. */
+    sculptStep: 0.05,
+    /**
+     * Uphill weight penalty. A candidate cell `dh` higher than the ant's own is
+     * weighted by `1 / (1 + uphillCost * dh)` — exactly 1 on flat ground, so a
+     * world with no relief behaves bit-for-bit like one with no height at all.
+     */
+    uphillCost: 6,
+    /** Downhill weight bonus: `1 + downhillGain * -dh`. Ants like rolling down. */
+    downhillGain: 2.5,
+  },
   world: {
     diffuseIntervalTicks: 2,
     cullIntervalTicks: 100,

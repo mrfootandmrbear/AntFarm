@@ -14,7 +14,7 @@ import { DiffusingField } from '../sim/DiffusingField';
 import { Lizard } from '../sim/Lizard';
 import { SimulationEngine } from '../sim/SimulationEngine';
 
-export const SNAPSHOT_VERSION = 1;
+export const SNAPSHOT_VERSION = 2;
 
 /** A Float32 array as either raw bytes or index/value pairs, whichever is smaller. */
 export type FloatBlob =
@@ -70,6 +70,8 @@ export interface WorldSnapshot {
   allowWater: boolean;
   cells: string;
   foodAmount: FloatBlob;
+  /** Surface relief. Added in version 2; older saves are simply flat. */
+  heightMap: FloatBlob;
   homeField: FloatBlob;
   foodField: FloatBlob;
   fireHomeField: FloatBlob;
@@ -204,6 +206,7 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
     allowWater: engine.allowWater,
     cells: bytesToBase64(world.cells),
     foodAmount: encodeFloats(world.foodAmount),
+    heightMap: encodeFloats(world.heightMap),
     homeField: encodeFloats(world.homeField.current),
     foodField: encodeFloats(world.foodField.current),
     fireHomeField: encodeFloats(world.fireHomeField.current),
@@ -231,6 +234,17 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
   }
   world.cells.set(cells);
   decodeFloatsInto(snap.foodAmount, world.foodAmount);
+
+  if (snap.heightMap) decodeFloatsInto(snap.heightMap, world.heightMap);
+  else world.heightMap.fill(0);
+  // `hasRelief` is a cache over heightMap, so rebuild it rather than trust the file.
+  world.hasRelief = false;
+  for (let i = 0; i < world.heightMap.length; i++) {
+    if (world.heightMap[i] !== 0) {
+      world.hasRelief = true;
+      break;
+    }
+  }
 
   // `blocked` is a pure function of terrain, so derive it instead of trusting the file.
   for (let i = 0; i < world.cells.length; i++) {
