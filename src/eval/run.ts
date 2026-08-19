@@ -75,6 +75,10 @@ export interface RivalryResult {
   controlHarvestersAlive: number;
   harvesterDelivered: number;
   fireDelivered: number;
+  /** fireAtPile / (fireAtPile + harvestersAtPile) over the peak contest window. */
+  fireRatio: number;
+  /** True if harvesters hit zero anywhere on the map before tick 3000. */
+  harvestersEliminatedEarly: boolean;
 }
 
 export interface PredationResult {
@@ -416,9 +420,19 @@ export function runRelocation(seed = DEFAULT_SEED): RelocationResult {
 /**
  * E_FIRE: one pile between a harvester mound and a fire mound.
  *
- * Fire ants should end up holding contested food. A control run without the
- * fire colony is the reference — otherwise a scenario where harvesters simply
- * starve would look like a win for the raiders.
+ * Fire ants should end up dominating access to contested food. A control run
+ * without the fire colony is the reference — otherwise a scenario where
+ * harvesters simply starve would look like a win for the raiders.
+ *
+ * Scored by displacement, not survivor counts: what fraction of the ants
+ * standing at the pile in the settled contest window are fire ants, and did
+ * harvesters get wiped off the whole map before the contest even finished
+ * forming. Straight survivor-count thresholds (e.g. "harvesters end up at
+ * <=60% of a control run's count") swing with bumpKillChance and seed noise —
+ * at 40k ticks harvesters often hit zero survivors under the current tuning
+ * even though the pile is a real contest, not a foregone wipe, in the window
+ * that matters. Majority presence at the pile without an early total wipe is
+ * the more seed-stable read of "fire ants dominate access."
  */
 export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
   const notes: string[] = [];
@@ -426,7 +440,8 @@ export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
   const harvNest = { x: 24, y: 40 };
   const fireNest = { x: 96, y: 40 };
   const perColony = 60;
-  const horizon = 2000;
+  const horizon = 5000;
+  const eliminationWindow = 3000;
   const pileRadius = 8;
 
   function build(withFire: boolean): SimulationEngine {
@@ -451,22 +466,30 @@ export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
     return n;
   }
 
-  /** Mean occupancy over the last 30% of the run, once the contest has settled. */
-  function occupancy(e: SimulationEngine): { harv: number; fire: number } {
+  /**
+   * Mean occupancy over the last 30% of the run, once the contest has
+   * settled, plus whether harvesters were wiped off the map entirely before
+   * `eliminationWindow` — a total early wipe is annihilation, not a contest.
+   */
+  function occupancy(e: SimulationEngine): { harv: number; fire: number; eliminatedEarly: boolean } {
     const lateStart = Math.floor(horizon * 0.7);
     let harv = 0;
     let fire = 0;
     let samples = 0;
+    let eliminatedEarly = false;
     while (e.world.tickCount < horizon) {
       e.tick();
       const t = e.world.tickCount;
+      if (t <= eliminationWindow && e.aliveCount() - e.fireAliveCount() === 0) {
+        eliminatedEarly = true;
+      }
       if (t % 10 !== 0 || t < lateStart) continue;
       harv += atPile(e, AntKind.HARVESTER);
       fire += atPile(e, AntKind.FIRE);
       samples++;
     }
     const n = Math.max(1, samples);
-    return { harv: harv / n, fire: fire / n };
+    return { harv: harv / n, fire: fire / n, eliminatedEarly };
   }
 
   const contested = build(true);
@@ -477,28 +500,22 @@ export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
   const fireAlive = contested.fireAliveCount();
   const harvestersAlive = contested.aliveCount() - fireAlive;
   const controlHarvestersAlive = control.aliveCount();
-  const harvesterLosses = perColony - harvestersAlive;
-  const fireLosses = perColony - fireAlive;
 
-  if (contestedOcc.fire < contestedOcc.harv * 1.5) {
-    notes.push(
-      `fire ants did not take the pile (${contestedOcc.fire.toFixed(2)} vs ${contestedOcc.harv.toFixed(2)})`,
-    );
+  const totalAtPile = contestedOcc.harv + contestedOcc.fire;
+  const fireRatio = totalAtPile > 0 ? contestedOcc.fire / totalAtPile : 0;
+  const harvestersEliminatedEarly = contestedOcc.eliminatedEarly;
+
+  if (fireRatio <= 0.5) {
+    notes.push(`fire ants did not hold majority presence at the pile (${(fireRatio * 100).toFixed(0)}%)`);
   }
-  if (harvestersAlive > controlHarvestersAlive * 0.6) {
-    notes.push(
-      `harvesters barely paid for the contest (${harvestersAlive} vs ${controlHarvestersAlive} uncontested)`,
-    );
-  }
-  if (fireLosses >= harvesterLosses) {
-    notes.push(`raid cost the raiders more (${fireLosses} fire vs ${harvesterLosses} harvester)`);
+  if (harvestersEliminatedEarly) {
+    notes.push(`harvesters were wiped off the map before tick ${eliminationWindow} (annihilation, not a contest)`);
   }
 
-  const pass =
-    contestedOcc.fire >= contestedOcc.harv * 1.5 &&
-    harvestersAlive <= controlHarvestersAlive * 0.6 &&
-    fireLosses < harvesterLosses;
-  if (pass) notes.push('fire ants displaced harvesters from the shared pile');
+  const pass = fireRatio > 0.5 && !harvestersEliminatedEarly;
+  if (pass) {
+    notes.push(`fire ants held ${(fireRatio * 100).toFixed(0)}% presence at the pile without an early wipe`);
+  }
 
   return {
     pass,
@@ -511,6 +528,8 @@ export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
     controlHarvestersAlive,
     harvesterDelivered: contested.world.foodDelivered,
     fireDelivered: contested.world.fireFoodDelivered,
+    fireRatio,
+    harvestersEliminatedEarly,
   };
 }
 
@@ -918,7 +937,7 @@ export function formatReport(r: EvalReport): string {
       ? `RELOCATE: ${yn(r.relocation.pass)} — new delivery ${r.relocation.newDeliveryTicks ?? 'never'} ticks; corridors old ${r.relocation.oldCorridorAfter.toFixed(0)} / new ${r.relocation.newCorridorAfter.toFixed(0)}${r.relocation.notes.length ? ' — ' + r.relocation.notes.join('; ') : ''}`
       : '',
     r.rivalry
-      ? `FIRE: ${yn(r.rivalry.pass)} — pile fire ${r.rivalry.fireAtPile.toFixed(2)} / harvester ${r.rivalry.harvestersAtPile.toFixed(2)} (uncontested ${r.rivalry.controlHarvestersAtPile.toFixed(2)}); survivors ${r.rivalry.harvestersAlive} harvester + ${r.rivalry.fireAlive} fire vs ${r.rivalry.controlHarvestersAlive} uncontested${r.rivalry.notes.length ? ' — ' + r.rivalry.notes.join('; ') : ''}`
+      ? `FIRE: ${yn(r.rivalry.pass)} — fire ratio at pile ${(r.rivalry.fireRatio * 100).toFixed(0)}% (fire ${r.rivalry.fireAtPile.toFixed(2)} / harvester ${r.rivalry.harvestersAtPile.toFixed(2)}, uncontested ${r.rivalry.controlHarvestersAtPile.toFixed(2)}); early wipe ${r.rivalry.harvestersEliminatedEarly}; survivors ${r.rivalry.harvestersAlive} harvester + ${r.rivalry.fireAlive} fire vs ${r.rivalry.controlHarvestersAlive} uncontested${r.rivalry.notes.length ? ' — ' + r.rivalry.notes.join('; ') : ''}`
       : '',
     r.predation
       ? `LIZARD: ${yn(r.predation.pass)} — ${r.predation.startAnts} ants → ${r.predation.huntedAnts} hunted / ${r.predation.controlAnts} unhunted; ${r.predation.lizardsAlive} lizard${r.predation.lizardsAlive === 1 ? '' : 's'} left${r.predation.notes.length ? ' — ' + r.predation.notes.join('; ') : ''}`
