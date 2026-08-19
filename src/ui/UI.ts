@@ -2,6 +2,7 @@ import { Cell, CellType, SimConfig } from '../sim/constants';
 import { saveWorld } from '../save/SaveStore';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { PixiRenderer } from '../render/PixiRenderer';
+import { assetUrl } from '../render/textures';
 
 type ToolKind = 'cell' | 'ant' | 'fireant' | 'lizard' | 'sculpt';
 
@@ -14,22 +15,24 @@ interface Tool {
   kind: ToolKind;
   cell?: CellType;
   icon: string;
+  /** Mini sprite preview in the palette swatch, when available. */
+  preview?: string;
   /** Sculpt tools only: sign of the height change under the brush. */
   sculpt?: number;
 }
 
 const TOOLS: Tool[] = [
   { id: 'erase', label: 'Bare soil', color: '#9c7748', key: '0', category: 'Ground', kind: 'cell', cell: Cell.DIRT, icon: '◌' },
-  { id: 'rock', label: 'Rock', color: '#69645b', key: '1', category: 'Ground', kind: 'cell', cell: Cell.WALL, icon: '◆' },
+  { id: 'rock', label: 'Rock', color: '#69645b', key: '1', category: 'Ground', kind: 'cell', cell: Cell.WALL, icon: '◆', preview: 'rock.png' },
   { id: 'water', label: 'Water', color: '#3c91b9', key: '2', category: 'Ground', kind: 'cell', cell: Cell.WATER, icon: '≈' },
   { id: 'raise', label: 'Pile up', color: '#c19a5e', key: '9', category: 'Shape', kind: 'sculpt', sculpt: 1, icon: '▲' },
   { id: 'lower', label: 'Scoop out', color: '#6f5836', key: '-', category: 'Shape', kind: 'sculpt', sculpt: -1, icon: '▼' },
-  { id: 'food', label: 'Food', color: '#64a643', key: '3', category: 'Life', kind: 'cell', cell: Cell.FOOD, icon: '✿' },
-  { id: 'nest', label: 'Ant nest', color: '#a45f38', key: '4', category: 'Homes', kind: 'cell', cell: Cell.NEST, icon: '⌂' },
-  { id: 'firenest', label: 'Fire nest', color: '#713522', key: '5', category: 'Homes', kind: 'cell', cell: Cell.FIRE_NEST, icon: '⌂' },
-  { id: 'ant', label: 'Ant', color: '#c45a28', key: '6', category: 'Creatures', kind: 'ant', icon: '•' },
-  { id: 'fireant', label: 'Fire ant', color: '#321b16', key: '7', category: 'Creatures', kind: 'fireant', icon: '•' },
-  { id: 'lizard', label: 'Lizard', color: '#b08958', key: '8', category: 'Creatures', kind: 'lizard', icon: '⌁' },
+  { id: 'food', label: 'Food', color: '#64a643', key: '3', category: 'Life', kind: 'cell', cell: Cell.FOOD, icon: '✿', preview: 'food.png' },
+  { id: 'nest', label: 'Ant nest', color: '#a45f38', key: '4', category: 'Homes', kind: 'cell', cell: Cell.NEST, icon: '⌂', preview: 'nest.png' },
+  { id: 'firenest', label: 'Fire nest', color: '#713522', key: '5', category: 'Homes', kind: 'cell', cell: Cell.FIRE_NEST, icon: '⌂', preview: 'fire-nest.png' },
+  { id: 'ant', label: 'Ant', color: '#c45a28', key: '6', category: 'Creatures', kind: 'ant', icon: '•', preview: 'ant-walk-00.png' },
+  { id: 'fireant', label: 'Fire ant', color: '#321b16', key: '7', category: 'Creatures', kind: 'fireant', icon: '•', preview: 'fire-ant-walk-00.png' },
+  { id: 'lizard', label: 'Lizard', color: '#b08958', key: '8', category: 'Creatures', kind: 'lizard', icon: '⌁', preview: 'lizard-walk-00.png' },
 ];
 
 const CATEGORY_ORDER = ['Ground', 'Shape', 'Life', 'Homes', 'Creatures'];
@@ -88,8 +91,17 @@ export class UI {
         btn.dataset.tool = tool.id;
         if (tool.id === this.selected.id) btn.classList.add('active');
 
-        const swatch = el('span', 'swatch', tool.icon);
+        const swatch = el('span', 'swatch', tool.preview ? '' : tool.icon);
         swatch.style.backgroundColor = tool.color;
+        if (tool.preview) {
+          const url = assetUrl(tool.preview);
+          if (url) {
+            swatch.classList.add('swatch-sprite');
+            swatch.style.backgroundImage = `url(${url})`;
+          } else {
+            swatch.textContent = tool.icon;
+          }
+        }
         btn.appendChild(swatch);
         btn.appendChild(document.createTextNode(tool.label));
         const hint = el('span', 'key-hint', tool.key);

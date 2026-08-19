@@ -35,6 +35,7 @@ Look work may start only after CORE PASS. KEEP a param change only if ADAPTATION
   go to zero and swarmDefenseCount never fires — real, but a different
   question than what E_FIRE now scores (see the eval-hardening entry below).
 - Look: vapor on by default, top-down walk/carry from Deposit, Scent/Erase/transport copy
+- Phase 5: species-specific nest architectures — fire dome vs harvester disk (E_ARCH)
 - Persistence: localStorage save/load, auto-save every 500 ticks
 - CI: GitHub Actions runs typecheck + eval on every push to main
 - Consecutive regressions: 0
@@ -402,6 +403,22 @@ a watchability question the new metric deliberately doesn't
 re-litigate, since "does the raid read as a contest in its settled
 window" and "do harvesters eventually go extinct on a shared pile"
 are different questions.
+
+### Phase 5 — species-specific nest architectures
+
+Trail formation: PASS (seed 1842 unchanged)
+Wall adaptation: PASS
+Old-trail decay: 82.9%
+
+Changed:
+E_ARCH headless gate — 30k ticks, 60 ants each, isolated colonies
+soil-pellet carry pose (carry frames + warm soil tint when `ant.soil`)
+default scene: twin nests (harvester west, fire east) with split colony
+
+Observation:
+Fire crown peaks ~0.45–0.50 with a tapering skirt; harvester centre
+stays ≤0.02 with a ~0.08–0.14 rim band. Architectures diverge on
+first load without player sculpting.
 
 Decision:
 KEEP

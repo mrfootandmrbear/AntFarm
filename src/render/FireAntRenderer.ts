@@ -16,6 +16,8 @@ export class FireAntRenderer extends AntSpeciesRenderer {
     tint: 0xb8b0b0,
     fallbackTint: 0x2a1814,
     fallbackCarryTint: 0xdca028,
+    fallbackSoilTint: 0x8a6030,
+    soilTint: 0xb89868,
   };
 
   protected owns(ant: Ant): boolean {

@@ -16,13 +16,13 @@ const NORMAL_TINT = 0xffffff;
  * the tongue — a separate pose held for the length of a feed, not an animation.
  */
 export class LizardRenderer {
-  private readonly pool = new SpritePool();
+  private pool!: SpritePool;
   private walk: Texture[] = [];
   private tongue: Texture | null = null;
   private usingFallback = false;
 
-  get container(): Container {
-    return this.pool.container;
+  initLayer(layer: Container): void {
+    this.pool = new SpritePool(layer);
   }
 
   async init(fallback: Texture): Promise<void> {
@@ -42,7 +42,7 @@ export class LizardRenderer {
     this.pool.begin();
     for (const lizard of lizards) {
       if (!lizard.alive) continue;
-      const sprite = this.pool.next(this.walk[0]);
+      const sprite = this.pool.next(this.walk[0], lizard.y);
       sprite.x = lizard.x * cellSize + half;
       sprite.y = lizard.y * cellSize + half;
       sprite.rotation = DIR_ANGLES[lizard.dir] + Math.PI / 2;

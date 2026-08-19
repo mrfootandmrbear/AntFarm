@@ -46,10 +46,14 @@ export class PixiRenderer {
   private undergroundSprite!: Sprite;
 
   private sceneryContainer!: Container;
+  private creatureLayer!: Container;
   private readonly harvesters = new HarvesterRenderer();
   private readonly fireAnts = new FireAntRenderer();
   private readonly lizards = new LizardRenderer();
   private fallbackCreature!: Texture;
+
+  /** Live food-pile sprites — scale/alpha refresh every frame as ants eat. */
+  private foodPatches: { sprite: Sprite; cells: number[]; baseScale: number }[] = [];
 
   private cellNoise!: Int8Array;
   private foodSpriteTex: Texture | null = null;
@@ -118,14 +122,21 @@ export class PixiRenderer {
     this.sceneryContainer = new Container();
     this.app.stage.addChild(this.sceneryContainer);
 
+    this.sceneryContainer = new Container();
+    this.app.stage.addChild(this.sceneryContainer);
+
+    this.creatureLayer = new Container();
+    this.creatureLayer.sortableChildren = true;
+    this.app.stage.addChild(this.creatureLayer);
+
     // Every creature renderer shares one drawn shape for when its art is missing.
     this.fallbackCreature = this.makeCreatureTexture();
+    this.harvesters.initLayer(this.creatureLayer);
+    this.fireAnts.initLayer(this.creatureLayer);
+    this.lizards.initLayer(this.creatureLayer);
     await this.harvesters.init(this.fallbackCreature);
     await this.fireAnts.init(this.fallbackCreature);
     await this.lizards.init(this.fallbackCreature);
-    this.app.stage.addChild(this.harvesters.container);
-    this.app.stage.addChild(this.fireAnts.container);
-    this.app.stage.addChild(this.lizards.container);
 
     this.foodSpriteTex = await loadTexture(assetUrl('food.png'));
     this.nestSpriteTex = await loadTexture(assetUrl('nest.png'));
@@ -157,20 +168,22 @@ export class PixiRenderer {
     this.vaporSprite.visible = !under && this.showPheromones;
     this.sceneryContainer.visible = !under;
     this.undergroundSprite.visible = under;
-    this.lizards.container.visible = !under;
 
     if (under) {
       this.updateUnderground();
     } else {
       this.updateTerrain();
-      this.updateVapor();
+      this.updateVapor(tick);
       this.updateScenery();
+      this.updateFoodDepletion();
     }
 
     const layer = under ? Layer.UNDERGROUND : Layer.SURFACE;
     this.harvesters.update(engine.ants, tick, this.cellSize, layer);
     this.fireAnts.update(engine.ants, tick, this.cellSize, layer);
-    if (!under) this.lizards.update(engine.lizards, tick, this.cellSize);
+    // Lizards share the ant creature layer, so hide them by rendering none —
+    // there is no separate lizard container to toggle visibility on.
+    this.lizards.update(under ? [] : engine.lizards, tick, this.cellSize);
   }
 
   invalidateScenery(): void {
@@ -218,6 +231,17 @@ export class PixiRenderer {
             r = 40 + shimmer;
             g = 100 + shimmer;
             b = 170 + shimmer * 0.5;
+            // Shore foam: lighten cells bordering dry ground.
+            if (
+              (x > 0 && cells[i - 1] !== Cell.WATER) ||
+              (x + 1 < w && cells[i + 1] !== Cell.WATER) ||
+              (y > 0 && cells[i - w] !== Cell.WATER) ||
+              (y + 1 < h && cells[i + w] !== Cell.WATER)
+            ) {
+              r += 28;
+              g += 32;
+              b += 18;
+            }
             break;
           }
           case Cell.FOOD: {
@@ -341,7 +365,7 @@ export class PixiRenderer {
     this.undergroundSource.update();
   }
 
-  private updateVapor(): void {
+  private updateVapor(tick: number): void {
     const world = this.world;
     const w = world.width;
     const h = world.height;
@@ -383,6 +407,9 @@ export class PixiRenderer {
         buf[p + 3] = 0;
         continue;
       }
+      const ix = i % w;
+      const iy = (i / w) | 0;
+      const drift = 0.88 + Math.sin(tick * 0.018 + ix * 0.11 + iy * 0.09) * 0.12;
       const harvest = fv + hv;
       const fire = ff + fh;
       const t = fv / (harvest + 0.0001);
@@ -397,10 +424,24 @@ export class PixiRenderer {
       buf[p] = r;
       buf[p + 1] = g;
       buf[p + 2] = b;
-      buf[p + 3] = Math.min(dens * 118, 112);
+      buf[p + 3] = Math.min(dens * 118 * drift, 112);
     }
 
     this.vaporSource.update();
+  }
+
+  /** Shrink and fade food sprites as the pile is eaten — reads depletion at a glance. */
+  private updateFoodDepletion(): void {
+    const world = this.world;
+    const amounts = world.foodAmount;
+    for (const patch of this.foodPatches) {
+      let total = 0;
+      for (const c of patch.cells) total += amounts[c];
+      const avg = total / patch.cells.length;
+      const fullness = 0.35 + avg * 0.65;
+      patch.sprite.alpha = 0.45 + avg * 0.55;
+      patch.sprite.scale.set(patch.baseScale * fullness);
+    }
   }
 
   /** Draw one coherent illustration per patch instead of stamping every grid cell. */
@@ -410,6 +451,7 @@ export class PixiRenderer {
     this.sceneryDirty = false;
     this.sceneryTick = tick;
     this.sceneryContainer.removeChildren().forEach((child) => child.destroy());
+    this.foodPatches = [];
 
     const { width: w, height: h, cells } = this.world;
     const seen = new Uint8Array(w * h);
@@ -441,22 +483,26 @@ export class PixiRenderer {
           }
         }
 
-        const stride = type === Cell.WALL ? Math.max(1, Math.floor(members.length / 12)) : members.length;
-        const points = type === Cell.WALL ? members.filter((_, i) => i % stride === 0) : [members[0]];
-        for (const point of points) {
-          const sprite = new Sprite(texture);
-          sprite.anchor.set(0.5);
-          const x = type === Cell.WALL ? point % w : sx / members.length;
-          const y = type === Cell.WALL ? (point / w) | 0 : sy / members.length;
-          sprite.x = (x + 0.5) * this.cellSize;
-          sprite.y = (y + 0.5) * this.cellSize;
-          const diameter = type === Cell.WALL ? 5.5 : Math.max(5, Math.min(12, Math.sqrt(members.length) * 2.3));
-          const target = diameter * this.cellSize;
-          sprite.scale.set(target / Math.max(texture.width, texture.height));
-          sprite.rotation = type === Cell.WALL ? ((point * 17) % 9 - 4) * 0.04 : 0;
-          sprite.alpha = type === Cell.FOOD ? 0.95 : 1;
-          this.sceneryContainer.addChild(sprite);
+        const cx = sx / members.length;
+        const cy = sy / members.length;
+        const sprite = new Sprite(texture);
+        sprite.anchor.set(0.5);
+        sprite.x = (cx + 0.5) * this.cellSize;
+        sprite.y = (cy + 0.5) * this.cellSize;
+        const diameter = Math.max(5, Math.min(14, Math.sqrt(members.length) * 2.3));
+        const target = diameter * this.cellSize;
+        const baseScale = target / Math.max(texture.width, texture.height);
+        sprite.scale.set(baseScale);
+        if (type === Cell.FOOD) {
+          this.foodPatches.push({ sprite, cells: members, baseScale });
+          sprite.alpha = 0.95;
+        } else if (type === Cell.WALL) {
+          sprite.alpha = 0.92;
+          sprite.rotation = ((members[0] * 17) % 7 - 3) * 0.06;
+        } else {
+          sprite.alpha = 1;
         }
+        this.sceneryContainer.addChild(sprite);
       }
     }
   }

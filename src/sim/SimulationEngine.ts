@@ -259,37 +259,40 @@ export class SimulationEngine {
     this.buildDefaultScene();
   }
 
-  /** The starting arrangement: central nest, scattered food, rocks, initial ants. */
+  /** The starting arrangement: twin nests so mound vs disk diverge on first load. */
   buildDefaultScene(): void {
     const world = this.world;
     const rng = world.rng;
     const GRID_W = world.width;
     const GRID_H = world.height;
-    const nestX = Math.floor(GRID_W / 2);
     const nestY = Math.floor(GRID_H / 2);
+    const harvNestX = Math.floor(GRID_W * 0.38);
+    const fireNestX = Math.floor(GRID_W * 0.62);
 
-    this.fillDisk(nestX, nestY, 3, Cell.NEST);
+    this.fillDisk(harvNestX, nestY, 3, Cell.NEST);
+    this.fillDisk(fireNestX, nestY, 3, Cell.FIRE_NEST);
 
     const foodSpots = [
-      { x: Math.floor(GRID_W * 0.2), y: Math.floor(GRID_H * 0.25) },
-      { x: Math.floor(GRID_W * 0.8), y: Math.floor(GRID_H * 0.3) },
-      { x: Math.floor(GRID_W * 0.15), y: Math.floor(GRID_H * 0.75) },
-      { x: Math.floor(GRID_W * 0.75), y: Math.floor(GRID_H * 0.8) },
-      { x: Math.floor(GRID_W * 0.5), y: Math.floor(GRID_H * 0.15) },
+      { x: Math.floor(GRID_W * 0.18), y: Math.floor(GRID_H * 0.28) },
+      { x: Math.floor(GRID_W * 0.82), y: Math.floor(GRID_H * 0.28) },
+      { x: Math.floor(GRID_W * 0.12), y: Math.floor(GRID_H * 0.72) },
+      { x: Math.floor(GRID_W * 0.88), y: Math.floor(GRID_H * 0.72) },
+      { x: Math.floor(GRID_W * 0.5), y: Math.floor(GRID_H * 0.12) },
+      { x: Math.floor(GRID_W * 0.5), y: Math.floor(GRID_H * 0.88) },
     ];
     for (const spot of foodSpots) {
       this.fillDisk(spot.x, spot.y, 3 + rng.int(3), Cell.FOOD);
     }
 
     const rockClusters = [
-      { x: Math.floor(GRID_W * 0.35), y: Math.floor(GRID_H * 0.35) },
-      { x: Math.floor(GRID_W * 0.65), y: Math.floor(GRID_H * 0.6) },
-      { x: Math.floor(GRID_W * 0.4), y: Math.floor(GRID_H * 0.8) },
+      { x: Math.floor(GRID_W * 0.5), y: Math.floor(GRID_H * 0.42) },
+      { x: Math.floor(GRID_W * 0.28), y: Math.floor(GRID_H * 0.55) },
+      { x: Math.floor(GRID_W * 0.72), y: Math.floor(GRID_H * 0.55) },
     ];
     for (const rock of rockClusters) {
-      for (let dx = -4; dx <= 4; dx++) {
+      for (let dx = -3; dx <= 3; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
-          if (Math.abs(dx) + Math.abs(dy) <= 4 && rng.chance(0.7)) {
+          if (Math.abs(dx) + Math.abs(dy) <= 3 && rng.chance(0.65)) {
             const rx = rock.x + dx;
             const ry = rock.y + dy;
             if (world.inBounds(rx, ry)) world.set(rx, ry, Cell.WALL);
@@ -298,7 +301,9 @@ export class SimulationEngine {
       }
     }
 
-    this.spawnAntsNear(nestX, nestY, SimConfig.colony.initialAnts);
+    const half = Math.floor(SimConfig.colony.initialAnts / 2);
+    this.spawnAntsNear(harvNestX, nestY, half);
+    this.spawnAntsNear(fireNestX, nestY, half, AntKind.FIRE);
     world.initialFoodMass = world.totalFoodMass();
   }
 }

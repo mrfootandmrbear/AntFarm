@@ -10,12 +10,13 @@ import { loadFrames } from './textures';
  * the GPU. Instead the pool grows to the high-water mark and hides the tail.
  */
 export class SpritePool {
-  readonly container = new Container();
   private sprites: Sprite[] = [];
   private used = 0;
 
+  constructor(readonly container: Container) {}
+
   /** Take the next sprite, creating it on first use. */
-  next(initial: Texture): Sprite {
+  next(initial: Texture, depth = 0): Sprite {
     let sprite = this.sprites[this.used];
     if (!sprite) {
       sprite = new Sprite(initial);
@@ -24,6 +25,7 @@ export class SpritePool {
       this.sprites[this.used] = sprite;
     }
     sprite.visible = true;
+    sprite.zIndex = depth;
     this.used++;
     return sprite;
   }
@@ -53,6 +55,10 @@ export interface AntSpecies {
   /** Tints for the drawn-shape fallback, which has no art to keep. */
   fallbackTint: number;
   fallbackCarryTint: number;
+  /** Brown tint when hauling an excavated soil pellet. */
+  fallbackSoilTint: number;
+  /** Multiply walk/carry art by this when hauling spoil. */
+  soilTint: number;
 }
 
 /**
@@ -63,14 +69,14 @@ export interface AntSpecies {
 export abstract class AntSpeciesRenderer {
   protected abstract readonly species: AntSpecies;
 
-  private readonly pool = new SpritePool();
+  private pool!: SpritePool;
   private walk: Texture[] = [];
   private carry: Texture[] = [];
   private fallback!: Texture;
   private usingFallback = false;
 
-  get container(): Container {
-    return this.pool.container;
+  initLayer(layer: Container): void {
+    this.pool = new SpritePool(layer);
   }
 
   async init(fallback: Texture): Promise<void> {
@@ -106,24 +112,31 @@ export abstract class AntSpeciesRenderer {
     this.pool.begin();
     for (const ant of ants) {
       if (!ant.alive || ant.layer !== layer || !this.owns(ant)) continue;
-      const sprite = this.pool.next(this.walk[0]);
+      const sprite = this.pool.next(this.walk[0], ant.y);
       sprite.x = ant.x * cellSize + half;
       sprite.y = ant.y * cellSize + half;
 
       if (this.usingFallback) {
         sprite.rotation = DIR_ANGLES[ant.dir];
         sprite.scale.set(1);
-        sprite.tint = ant.carrying ? this.species.fallbackCarryTint : this.species.fallbackTint;
+        sprite.tint = ant.carrying
+          ? this.species.fallbackCarryTint
+          : ant.soilLoad > 0
+            ? this.species.fallbackSoilTint
+            : this.species.fallbackTint;
         continue;
       }
 
       // The art faces up; headings are measured from the +x axis.
       sprite.rotation = DIR_ANGLES[ant.dir] + Math.PI / 2;
       sprite.scale.set(scale);
-      sprite.tint = this.species.tint;
+      const haulingSoil = ant.soilLoad > 0 && !ant.carrying;
+      sprite.tint = haulingSoil ? this.species.soilTint : this.species.tint;
       // Offset by position so a column of ants does not march in lockstep.
-      const frame = (tick + ant.x * 3 + ant.y) % (ant.carrying ? carryN : walkN);
-      sprite.texture = ant.carrying ? this.carry[frame] : this.walk[frame];
+      const frame =
+        (tick + ant.x * 3 + ant.y) %
+        (ant.carrying || haulingSoil ? carryN : walkN);
+      sprite.texture = ant.carrying || haulingSoil ? this.carry[frame] : this.walk[frame];
     }
     this.pool.end();
   }

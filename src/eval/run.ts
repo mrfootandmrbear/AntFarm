@@ -43,6 +43,7 @@ export interface EvalReport {
   chokepoint?: ChokepointResult;
   soak?: SoakResult;
   mound?: MoundResult;
+  architecture?: ArchitectureResult;
 }
 
 export interface PulseResult {
@@ -142,6 +143,27 @@ export interface SoakResult {
   delivered: number;
   sampledCells: number;
   nonFiniteCells: number;
+}
+
+/** Height profile around a nest centre after a long mound-building run. */
+export interface NestProfile {
+  /** Max height within ~1.5 cells of the nest centre. */
+  centerPeak: number;
+  /** Max height in the r3–5 ring (harvester rim band). */
+  rimPeak: number;
+  /** Max height in the r9–10 ring (mound skirt / disk edge). */
+  outerPeak: number;
+}
+
+export interface ArchitectureResult {
+  pass: boolean;
+  notes: string[];
+  ticks: number;
+  antsPerColony: number;
+  fire: NestProfile;
+  fireAlive: number;
+  harvester: NestProfile;
+  harvesterAlive: number;
 }
 
 function makeEngine(seed: number): SimulationEngine {
@@ -913,6 +935,100 @@ export function runSoak(seed = DEFAULT_SEED, ticks = 100_000): SoakResult {
   };
 }
 
+/** Sample the relief ring structure around a nest after mound-building. */
+export function measureNestProfile(
+  engine: SimulationEngine,
+  cx: number,
+  cy: number,
+): NestProfile {
+  const world = engine.world;
+  let centerPeak = 0;
+  let rimPeak = 0;
+  let outerPeak = 0;
+
+  for (let dy = -12; dy <= 12; dy++) {
+    for (let dx = -12; dx <= 12; dx++) {
+      const x = cx + dx;
+      const y = cy + dy;
+      if (!world.inBounds(x, y)) continue;
+      const h = world.heightAt(x, y);
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= 1.5) centerPeak = Math.max(centerPeak, h);
+      if (d >= 3 && d <= 5) rimPeak = Math.max(rimPeak, h);
+      if (d >= 9 && d <= 10) outerPeak = Math.max(outerPeak, h);
+    }
+  }
+
+  return { centerPeak, rimPeak, outerPeak };
+}
+
+/**
+ * E_ARCH: species-specific nest architectures.
+ *
+ * Fire ants should grow a tall dome peaked at the nest crown; harvesters should
+ * scrape a flat disk with a low rim and almost nothing at the centre. Each colony
+ * runs in isolation so their spoil rules do not interfere.
+ */
+export function runArchitecture(seed = DEFAULT_SEED, ticks = 30_000): ArchitectureResult {
+  const notes: string[] = [];
+  const antsPerColony = 60;
+  const nest = { x: 60, y: 40 };
+  const food = { x: 96, y: 40 };
+
+  function build(kind: (typeof AntKind)[keyof typeof AntKind]): SimulationEngine {
+    const engine = new SimulationEngine(W, H, seed);
+    engine.allowSpawn = false;
+    engine.allowWater = false;
+    const cell = kind === AntKind.FIRE ? Cell.FIRE_NEST : Cell.NEST;
+    engine.fillDisk(nest.x, nest.y, 3, cell);
+    engine.fillDisk(food.x, food.y, 8, Cell.FOOD);
+    engine.spawnAntsNear(nest.x, nest.y, antsPerColony, kind);
+    engine.world.initialFoodMass = engine.world.totalFoodMass();
+    return engine;
+  }
+
+  const fireEngine = build(AntKind.FIRE);
+  const harvEngine = build(AntKind.HARVESTER);
+  while (fireEngine.world.tickCount < ticks) fireEngine.tick();
+  while (harvEngine.world.tickCount < ticks) harvEngine.tick();
+
+  const fire = measureNestProfile(fireEngine, nest.x, nest.y);
+  const harvester = measureNestProfile(harvEngine, nest.x, nest.y);
+  const fireAlive = fireEngine.aliveCount();
+  const harvesterAlive = harvEngine.aliveCount();
+
+  if (fireAlive < 45) notes.push(`fire colony thinned (${fireAlive} alive)`);
+  if (harvesterAlive < 45) notes.push(`harvester colony thinned (${harvesterAlive} alive)`);
+  if (fire.centerPeak < 0.3) notes.push('fire dome too flat at the crown');
+  if (fire.centerPeak < fire.outerPeak * 2) notes.push('fire relief does not taper like a dome');
+  if (harvester.centerPeak > 0.03) notes.push('harvester centre not scraped flat');
+  if (harvester.rimPeak < 0.05) notes.push('harvester rim too low');
+  if (harvester.rimPeak < harvester.centerPeak * 2) notes.push('harvester rim not above flat centre');
+  if (fire.centerPeak < harvester.rimPeak * 2) notes.push('architectures not distinct enough');
+
+  const pass =
+    fireAlive >= 45 &&
+    harvesterAlive >= 45 &&
+    fire.centerPeak >= 0.3 &&
+    fire.centerPeak >= fire.outerPeak * 2 &&
+    harvester.centerPeak <= 0.03 &&
+    harvester.rimPeak >= 0.05 &&
+    harvester.rimPeak >= harvester.centerPeak * 2 &&
+    fire.centerPeak >= harvester.rimPeak * 2;
+  if (pass) notes.push('fire dome vs harvester disk');
+
+  return {
+    pass,
+    notes,
+    ticks,
+    antsPerColony,
+    fire,
+    fireAlive,
+    harvester,
+    harvesterAlive,
+  };
+}
+
 export function formatReport(r: EvalReport): string {
   const yn = (p: boolean) => (p ? 'PASS' : 'FAIL');
   return [
@@ -954,6 +1070,9 @@ export function formatReport(r: EvalReport): string {
     r.mound
       ? `MOUND: ${yn(r.mound.pass)} — ${r.mound.passCount}/${r.mound.seeds.length} seeds domed (${r.mound.seeds.map((s) => `${s.seed}:${s.pass ? 'pass' : 'fail'} fire ${s.fireMean.toFixed(3)}/${s.firePeak.toFixed(3)} vs harv ${s.harvMean.toFixed(3)}/${s.harvPeak.toFixed(3)}`).join(', ')})${r.mound.notes.length ? ' — ' + r.mound.notes.join('; ') : ''}`
       : '',
+    r.architecture
+      ? `ARCH: ${yn(r.architecture.pass)} — fire crown ${r.architecture.fire.centerPeak.toFixed(2)} / skirt ${r.architecture.fire.outerPeak.toFixed(2)}; harvester centre ${r.architecture.harvester.centerPeak.toFixed(2)} / rim ${r.architecture.harvester.rimPeak.toFixed(2)}${r.architecture.notes.length ? ' — ' + r.architecture.notes.join('; ') : ''}`
+      : '',
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -970,6 +1089,8 @@ if (isMain) {
   report.predation = runLizardPredation(seed);
   report.multiFood = runMultiFood(seed);
   report.chokepoint = runChokepoint(seed);
+  // Architecture runs two 30k-tick colonies; skip in the fast tuner loop.
+  if (!process.argv.includes('--skip-arch')) report.architecture = runArchitecture(seed);
   // The soak and the mound eval are the two slow ones (~20s each). `--skip-soak`
   // keeps the tuner's loop short; CI runs the whole thing.
   if (!process.argv.includes('--skip-soak')) {
