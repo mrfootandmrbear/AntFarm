@@ -1,0 +1,29 @@
+name: eval
+
+# The headless success test is the gate: `npm run eval` exits non-zero when
+# CORE fails, so a change that breaks trail emergence cannot land quietly.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Headless eval (CORE / ADAPTATION / MEMORY)
+        run: npm run eval
