@@ -4,7 +4,8 @@
  * Do not optimize for fastest food delivery. Optimize for legible emergence.
  * A conveyor-belt lock-in or an immortal trail is a failed run.
  */
-import { AntKind, Cell } from '../sim/constants';
+import { AntKind, Cell, SimConfig } from '../sim/constants';
+import { Rng } from '../sim/Rng';
 import { SimulationEngine } from '../sim/SimulationEngine';
 
 const W = 120;
@@ -38,6 +39,7 @@ export interface EvalReport {
   relocation?: RelocationResult;
   rivalry?: RivalryResult;
   predation?: PredationResult;
+  soak?: SoakResult;
 }
 
 export interface PulseResult {
@@ -79,6 +81,22 @@ export interface PredationResult {
   huntedAnts: number;
   controlAnts: number;
   lizardsAlive: number;
+}
+
+export interface SoakResult {
+  pass: boolean;
+  notes: string[];
+  ticks: number;
+  endAnts: number;
+  minAnts: number;
+  maxAnts: number;
+  minStore: number;
+  maxStore: number;
+  granaryCeiling: number;
+  foodLeft: number;
+  delivered: number;
+  sampledCells: number;
+  nonFiniteCells: number;
 }
 
 function makeEngine(seed: number): SimulationEngine {
@@ -503,6 +521,113 @@ export function runLizardPredation(seed = DEFAULT_SEED): PredationResult {
   return { pass, notes, startAnts, huntedAnts, controlAnts, lizardsAlive };
 }
 
+/**
+ * E_SOAK: 100k ticks of one colony on one pile, watching for slow rot.
+ *
+ * The granary is the thing under test. Hatching spends it, hungry searchers sip
+ * it, deliveries refill it — a sign error or a missing floor shows up not in the
+ * first thousand ticks but after tens of thousands, as a colony that quietly
+ * dies, breeds past its cap, or banks food it never collected.
+ *
+ * The pile is deliberately large enough to outlast the run: a colony starving
+ * because the world ran out of food is a finished story, not an instability.
+ */
+export function runSoak(seed = DEFAULT_SEED, ticks = 100_000): SoakResult {
+  const notes: string[] = [];
+  const engine = new SimulationEngine(W, H, seed);
+  engine.allowWater = false;
+  engine.fillDisk(NEST.x, NEST.y, 3, Cell.NEST);
+  engine.fillDisk(FOOD.x, FOOD.y, 12, Cell.FOOD);
+  engine.spawnAntsNear(NEST.x, NEST.y, ANTS);
+  engine.world.initialFoodMass = engine.world.totalFoodMass();
+
+  // Nothing can be stored that was never on the ground, so the starting mass is
+  // the granary's physical ceiling — no invented constant to drift out of date.
+  const granaryCeiling = engine.world.initialFoodMass;
+  const antCap = SimConfig.colony.maxAnts;
+  const antTolerance = 5;
+
+  let minAnts = Infinity;
+  let maxAnts = 0;
+  let minStore = Infinity;
+  let maxStore = -Infinity;
+  let storeEscaped = false;
+
+  while (engine.world.tickCount < ticks) {
+    engine.tick();
+    const store = engine.world.nestFoodStore;
+    if (store < minStore) minStore = store;
+    if (store > maxStore) maxStore = store;
+    if (!Number.isFinite(store) || store < 0 || store > granaryCeiling) storeEscaped = true;
+    const alive = engine.aliveCount();
+    if (alive < minAnts) minAnts = alive;
+    if (alive > maxAnts) maxAnts = alive;
+  }
+
+  // Spot-check for NaN/Infinity the way a player would never notice it: pick a
+  // few cells at random. The full scan behind it is cheap and catches the rest.
+  const fields = [
+    engine.world.homeField,
+    engine.world.foodField,
+    engine.world.fireHomeField,
+    engine.world.fireFoodField,
+  ];
+  const probe = new Rng(seed ^ 0x50a4);
+  let sampledCells = 0;
+  let nonFiniteCells = 0;
+  for (let i = 0; i < 10; i++) {
+    const cell = probe.int(W * H);
+    for (const field of fields) {
+      sampledCells++;
+      if (!Number.isFinite(field.getAt(cell))) nonFiniteCells++;
+    }
+  }
+  for (const field of fields) {
+    for (let i = 0; i < field.current.length; i++) {
+      if (!Number.isFinite(field.current[i])) nonFiniteCells++;
+    }
+  }
+
+  const endAnts = engine.aliveCount();
+  const foodLeft = engine.world.totalFoodMass();
+
+  if (endAnts <= 0) notes.push('colony went extinct');
+  if (maxAnts > antCap + antTolerance) {
+    notes.push(`colony exceeded its cap (${maxAnts} > ${antCap})`);
+  }
+  if (storeEscaped) {
+    notes.push(
+      `granary left [0, ${granaryCeiling.toFixed(0)}] (saw ${minStore.toFixed(2)}..${maxStore.toFixed(2)})`,
+    );
+  }
+  if (nonFiniteCells > 0) notes.push(`${nonFiniteCells} non-finite pheromone cells`);
+  if (foodLeft <= 0) notes.push('pile exhausted — soak no longer tests a fed colony');
+
+  const pass =
+    endAnts > 0 &&
+    maxAnts <= antCap + antTolerance &&
+    !storeEscaped &&
+    nonFiniteCells === 0 &&
+    foodLeft > 0;
+  if (pass) notes.push('colony held its cap and its granary for 100k ticks');
+
+  return {
+    pass,
+    notes,
+    ticks,
+    endAnts,
+    minAnts: minAnts === Infinity ? 0 : minAnts,
+    maxAnts,
+    minStore: minStore === Infinity ? 0 : minStore,
+    maxStore: maxStore === -Infinity ? 0 : maxStore,
+    granaryCeiling,
+    foodLeft,
+    delivered: engine.world.foodDelivered,
+    sampledCells,
+    nonFiniteCells,
+  };
+}
+
 export function formatReport(r: EvalReport): string {
   const yn = (p: boolean) => (p ? 'PASS' : 'FAIL');
   return [
@@ -532,6 +657,9 @@ export function formatReport(r: EvalReport): string {
     r.predation
       ? `LIZARD: ${yn(r.predation.pass)} — ${r.predation.startAnts} ants → ${r.predation.huntedAnts} hunted / ${r.predation.controlAnts} unhunted; ${r.predation.lizardsAlive} lizard${r.predation.lizardsAlive === 1 ? '' : 's'} left${r.predation.notes.length ? ' — ' + r.predation.notes.join('; ') : ''}`
       : '',
+    r.soak
+      ? `SOAK: ${yn(r.soak.pass)} — ${(r.soak.ticks / 1000).toFixed(0)}k ticks; ants ${r.soak.minAnts}..${r.soak.maxAnts} → ${r.soak.endAnts}; granary ${r.soak.minStore.toFixed(2)}..${r.soak.maxStore.toFixed(2)} of ${r.soak.granaryCeiling.toFixed(0)}; food left ${r.soak.foodLeft.toFixed(0)}; ${r.soak.nonFiniteCells} non-finite${r.soak.notes.length ? ' — ' + r.soak.notes.join('; ') : ''}`
+      : '',
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -546,6 +674,9 @@ if (isMain) {
   report.relocation = runRelocation(seed);
   report.rivalry = runFireRivalry(seed);
   report.predation = runLizardPredation(seed);
+  // The soak is ~20s on its own. `--skip-soak` keeps the tuner's loop short;
+  // CI runs the whole thing.
+  if (!process.argv.includes('--skip-soak')) report.soak = runSoak(seed);
   console.log(formatReport(report));
   process.exit(report.core.pass ? 0 : 1);
 }
