@@ -1,5 +1,6 @@
 import { Cell, DIRS, SimConfig } from './constants';
 import type { DiffusingField } from './DiffusingField';
+import type { Rng } from './Rng';
 import type { World } from './World';
 
 export const AntState = {
@@ -25,13 +26,14 @@ export class Ant {
   alive = true;
   stuckTimer = 0;
   digCooldown = 0;
+  returnTicks = 0;
 
-  constructor(x: number, y: number, nestX: number, nestY: number) {
+  constructor(x: number, y: number, nestX: number, nestY: number, rng: Rng) {
     this.x = x;
     this.y = y;
     this.nestX = nestX;
     this.nestY = nestY;
-    this.dir = (Math.random() * 8) | 0;
+    this.dir = rng.int(8);
   }
 
   update(world: World): void {
@@ -58,7 +60,7 @@ export class Ant {
 
   private search(world: World): void {
     const i = world.idx(this.x, this.y);
-    world.homeField.deposit(this.x, this.y, SimConfig.pheromone.depositAmount);
+    world.homeField.deposit(this.x, this.y, SimConfig.pheromone.exploreDeposit);
 
     if (world.cells[i] === Cell.FOOD && world.foodAmount[i] > 0.05) {
       world.foodAmount[i] -= 0.1;
@@ -68,6 +70,7 @@ export class Ant {
       }
       this.carrying = true;
       this.state = AntState.RETURNING;
+      this.returnTicks = 0;
       this.energy = Math.min(this.energy + SimConfig.ant.foodEnergyGain, 1.0);
       this.dir = (this.dir + 4) % 8;
       return;
@@ -78,13 +81,23 @@ export class Ant {
 
   private returnToNest(world: World): void {
     const i = world.idx(this.x, this.y);
-    world.foodField.deposit(this.x, this.y, SimConfig.pheromone.depositAmount);
+    world.foodField.deposit(this.x, this.y, SimConfig.pheromone.foodDeposit);
+    this.returnTicks++;
 
     if (world.cells[i] === Cell.NEST) {
       this.carrying = false;
       this.state = AntState.SEARCHING;
+      this.returnTicks = 0;
       this.energy = Math.min(this.energy + SimConfig.ant.nestEnergyGain, 1.0);
       world.nestFoodStore += 0.1;
+      this.dir = (this.dir + 4) % 8;
+      return;
+    }
+
+    if (this.returnTicks >= SimConfig.ant.giveUpReturnTicks) {
+      this.carrying = false;
+      this.state = AntState.SEARCHING;
+      this.returnTicks = 0;
       this.dir = (this.dir + 4) % 8;
       return;
     }
@@ -127,7 +140,7 @@ export class Ant {
     this.stuckTimer = 0;
 
     // Occasional opportunistic dig even when a path exists, to open shortcuts.
-    if (this.digCooldown <= 0 && Math.random() < 0.03) {
+    if (this.digCooldown <= 0 && world.rng.chance(0.03)) {
       const d = DIRS[this.dir];
       const digX = this.x + d.dx;
       const digY = this.y + d.dy;
@@ -142,8 +155,8 @@ export class Ant {
     }
 
     // Random exploration.
-    if (Math.random() < 0.1) {
-      const pick = candidates[(Math.random() * candidates.length) | 0];
+    if (world.rng.chance(0.1)) {
+      const pick = candidates[world.rng.int(candidates.length)];
       this.moveTo(pick.nx, pick.ny, pick.idx);
       return;
     }
@@ -151,7 +164,7 @@ export class Ant {
     // Weighted roulette toward stronger pheromone / targets.
     let totalWeight = 0;
     for (const c of candidates) totalWeight += c.weight;
-    let r = Math.random() * totalWeight;
+    let r = world.rng.next() * totalWeight;
     for (const c of candidates) {
       r -= c.weight;
       if (r <= 0) {
@@ -178,10 +191,10 @@ export class Ant {
         return;
       }
     }
-    this.dir = (this.dir + 3 + ((Math.random() * 3) | 0)) % 8;
+    this.dir = (this.dir + 3 + world.rng.int(3)) % 8;
     this.stuckTimer++;
     if (this.stuckTimer > 10) {
-      this.dir = (Math.random() * 8) | 0;
+      this.dir = world.rng.int(8);
       this.stuckTimer = 0;
     }
   }

@@ -1,5 +1,6 @@
 import { Cell, CellType, SimConfig } from './constants';
 import { DiffusingField } from './DiffusingField';
+import { Rng } from './Rng';
 
 /**
  * The spatial state of the simulation: terrain grid, per-cell food amount, and
@@ -25,8 +26,11 @@ export class World {
 
   nestFoodStore = 0;
   tickCount = 0;
+  readonly rng: Rng;
+  /** Starting food mass, set by eval/scenes so delivery % is meaningful. */
+  initialFoodMass = 0;
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, seed = 1) {
     this.width = width;
     this.height = height;
     const size = width * height;
@@ -35,6 +39,7 @@ export class World {
     this.cells.fill(Cell.DIRT);
     this.foodAmount = new Float32Array(size);
     this.blocked = new Uint8Array(size);
+    this.rng = new Rng(seed);
 
     const p = SimConfig.pheromone;
     const opts = {
@@ -55,6 +60,36 @@ export class World {
     this.foodField.clear();
     this.nestFoodStore = 0;
     this.tickCount = 0;
+    this.initialFoodMass = 0;
+  }
+
+  totalFoodMass(): number {
+    let s = 0;
+    for (let i = 0; i < this.foodAmount.length; i++) s += this.foodAmount[i];
+    return s;
+  }
+
+  fieldMass(field: DiffusingField): number {
+    let s = 0;
+    const a = field.current;
+    for (let i = 0; i < a.length; i++) s += a[i];
+    return s;
+  }
+
+  /** Sum of a field inside [x0,x1] x [y0,y1] (inclusive, clamped). */
+  fieldMassRect(field: DiffusingField, x0: number, y0: number, x1: number, y1: number): number {
+    const w = this.width;
+    const a = field.current;
+    const xa = Math.max(0, Math.min(x0, x1));
+    const xb = Math.min(w - 1, Math.max(x0, x1));
+    const ya = Math.max(0, Math.min(y0, y1));
+    const yb = Math.min(this.height - 1, Math.max(y0, y1));
+    let s = 0;
+    for (let y = ya; y <= yb; y++) {
+      const row = y * w;
+      for (let x = xa; x <= xb; x++) s += a[row + x];
+    }
+    return s;
   }
 
   idx(x: number, y: number): number {
@@ -103,8 +138,8 @@ export class World {
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         if (cells[this.idx(x, y)] !== Cell.WATER) continue;
-        if (Math.random() > 0.15) continue;
-        const d = dirs[(Math.random() * 4) | 0];
+        if (this.rng.next() > 0.15) continue;
+        const d = dirs[this.rng.int(4)];
         const nx = x + d.dx;
         const ny = y + d.dy;
         if (!this.inBounds(nx, ny)) continue;

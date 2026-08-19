@@ -41,20 +41,25 @@ export const DIR_ANGLES: number[] = DIRS.map((d) => Math.atan2(d.dy, d.dx));
 export const SimConfig = {
   // Pheromone field dynamics (per diffuse step).
   pheromone: {
-    evaporation: 0.993,
-    diffusion: 0.015,
+    evaporation: 0.990,
+    diffusion: 0.02,
     minThreshold: 0.001,
     max: 10,
-    depositAmount: 1.0,
+    /** Searching ants: weak home trail so returners can find the nest. */
+    exploreDeposit: 0.28,
+    /** Returning ants: stronger food trail so searchers can recruit. */
+    foodDeposit: 0.85,
   },
   ant: {
     energyDrainPerTick: 0.0001,
     digEnergyCost: 0.005,
     foodEnergyGain: 0.3,
     nestEnergyGain: 0.5,
+    /** Drop cargo and search again if the nest hasn't been found. */
+    giveUpReturnTicks: 1800,
   },
   colony: {
-    maxAnts: 100,
+    maxAnts: 120,
     spawnIntervalTicks: 50,
     initialAnts: 40,
   },

@@ -15,15 +15,15 @@ interface Tool {
 }
 
 const TOOLS: Tool[] = [
-  { id: 'erase', label: 'Dirt', color: '#8b7348', key: '0', category: 'Terrain', kind: 'cell', cell: Cell.DIRT },
+  { id: 'erase', label: 'Erase', color: '#8b7348', key: '0', category: 'Terrain', kind: 'cell', cell: Cell.DIRT },
   { id: 'rock', label: 'Rock', color: '#5a5550', key: '1', category: 'Terrain', kind: 'cell', cell: Cell.WALL },
   { id: 'water', label: 'Water', color: '#2864aa', key: '2', category: 'Water', kind: 'cell', cell: Cell.WATER },
   { id: 'food', label: 'Food', color: '#2ecc71', key: '3', category: 'Plants & Food', kind: 'cell', cell: Cell.FOOD },
   { id: 'nest', label: 'Nest', color: '#8c4630', key: '4', category: 'Structures', kind: 'cell', cell: Cell.NEST },
-  { id: 'ant', label: 'Ant', color: '#1e140f', key: '5', category: 'Insects', kind: 'ant' },
+  { id: 'ant', label: 'Ant', color: '#1e140f', key: '5', category: 'Bugs', kind: 'ant' },
 ];
 
-const CATEGORY_ORDER = ['Terrain', 'Water', 'Plants & Food', 'Structures', 'Insects'];
+const CATEGORY_ORDER = ['Terrain', 'Water', 'Plants & Food', 'Structures', 'Bugs'];
 
 export class UI {
   private engine: SimulationEngine;
@@ -172,25 +172,16 @@ export class UI {
     const bar = document.getElementById('statusbar')!;
 
     const viewGroup = el('div', 'bar-group');
-    viewGroup.appendChild(el('div', 'group-label', 'Pheromones'));
+    viewGroup.appendChild(el('div', 'group-label', 'Scent'));
     const trailBtn = document.createElement('button');
     trailBtn.className = 'btn';
-    trailBtn.textContent = 'Trails: Off';
+    trailBtn.textContent = this.renderer.showPheromones ? 'Scent: On' : 'Scent: Off';
+    if (this.renderer.showPheromones) trailBtn.classList.add('active');
     trailBtn.addEventListener('click', () => {
       const r = this.renderer;
-      if (!r.showPheromones) {
-        r.showPheromones = true;
-        r.pheromoneType = 'food';
-        trailBtn.textContent = 'Trails: Food';
-        trailBtn.classList.add('active');
-      } else if (r.pheromoneType === 'food') {
-        r.pheromoneType = 'home';
-        trailBtn.textContent = 'Trails: Home';
-      } else {
-        r.showPheromones = false;
-        trailBtn.textContent = 'Trails: Off';
-        trailBtn.classList.remove('active');
-      }
+      r.showPheromones = !r.showPheromones;
+      trailBtn.textContent = r.showPheromones ? 'Scent: On' : 'Scent: Off';
+      trailBtn.classList.toggle('active', r.showPheromones);
     });
     viewGroup.appendChild(trailBtn);
     bar.appendChild(viewGroup);

@@ -8,7 +8,7 @@ const GRID_H = 150;
 const CELL_SIZE = 4;
 
 async function main(): Promise<void> {
-  const engine = new SimulationEngine(GRID_W, GRID_H);
+  const engine = new SimulationEngine(GRID_W, GRID_H, (Date.now() >>> 0) || 1);
   engine.buildDefaultScene();
 
   const renderer = new PixiRenderer();

@@ -1,5 +1,5 @@
 import { Ant } from './Ant';
-import { Cell } from './constants';
+import { Cell, CellType } from './constants';
 import { SimConfig } from './constants';
 import { World } from './World';
 
@@ -10,9 +10,11 @@ import { World } from './World';
 export class SimulationEngine {
   readonly world: World;
   ants: Ant[] = [];
+  allowSpawn = true;
+  allowWater = true;
 
-  constructor(width: number, height: number) {
-    this.world = new World(width, height);
+  constructor(width: number, height: number, seed = 1) {
+    this.world = new World(width, height, seed);
   }
 
   /** Advance the simulation by one step. */
@@ -20,7 +22,7 @@ export class SimulationEngine {
     const world = this.world;
     const cfg = SimConfig.world;
 
-    if (world.tickCount % cfg.waterIntervalTicks === 0) {
+    if (this.allowWater && world.tickCount % cfg.waterIntervalTicks === 0) {
       world.updateWater();
     }
 
@@ -30,7 +32,7 @@ export class SimulationEngine {
       this.ants = this.ants.filter((a) => a.alive);
     }
 
-    this.spawnAnts();
+    if (this.allowSpawn) this.spawnAnts();
 
     if (world.tickCount % cfg.diffuseIntervalTicks === 0) {
       world.homeField.diffuse(world.blocked);
@@ -58,7 +60,7 @@ export class SimulationEngine {
         const nx = nest.x + dx;
         const ny = nest.y + dy;
         if (world.inBounds(nx, ny) && world.isPassable(nx, ny)) {
-          this.ants.push(new Ant(nx, ny, nest.x, nest.y));
+          this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.rng));
           if (world.nestFoodStore > 0.2) world.nestFoodStore -= 0.2;
           return;
         }
@@ -70,8 +72,49 @@ export class SimulationEngine {
   spawnAntAt(x: number, y: number): boolean {
     const nest = this.world.findNearestNest(x, y);
     if (!nest || !this.world.isPassable(x, y)) return false;
-    this.ants.push(new Ant(x, y, nest.x, nest.y));
+    this.ants.push(new Ant(x, y, nest.x, nest.y, this.world.rng));
     return true;
+  }
+
+  spawnAntsNear(x: number, y: number, count: number): number {
+    let n = 0;
+    const rng = this.world.rng;
+    for (let i = 0; i < count; i++) {
+      const ax = x + rng.int(9) - 4;
+      const ay = y + rng.int(9) - 4;
+      if (this.spawnAntAt(ax, ay)) n++;
+    }
+    return n;
+  }
+
+  fillDisk(cx: number, cy: number, radius: number, type: CellType): void {
+    const world = this.world;
+    const r2 = radius * radius;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx * dx + dy * dy > r2) continue;
+        const x = cx + dx;
+        const y = cy + dy;
+        if (world.inBounds(x, y)) world.set(x, y, type);
+      }
+    }
+  }
+
+  /** Horizontal rock wall with a gap. Used by eval — rock is not diggable. */
+  placeWallWithGap(
+    x: number,
+    y0: number,
+    y1: number,
+    gapY: number,
+    gapHalf: number,
+  ): void {
+    const world = this.world;
+    const lo = Math.min(y0, y1);
+    const hi = Math.max(y0, y1);
+    for (let y = lo; y <= hi; y++) {
+      if (Math.abs(y - gapY) <= gapHalf) continue;
+      if (world.inBounds(x, y)) world.set(x, y, Cell.WALL);
+    }
   }
 
   aliveCount(): number {
@@ -84,6 +127,18 @@ export class SimulationEngine {
     let n = 0;
     for (const a of this.ants) if (a.alive && a.carrying) n++;
     return n;
+  }
+
+  searchingSpread(): number {
+    const xs: number[] = [];
+    for (const a of this.ants) {
+      if (a.alive && !a.carrying) xs.push(a.x);
+    }
+    if (xs.length < 2) return 0;
+    const mean = xs.reduce((s, v) => s + v, 0) / xs.length;
+    let v = 0;
+    for (const x of xs) v += (x - mean) * (x - mean);
+    return Math.sqrt(v / xs.length);
   }
 
   /** Wipe everything back to bare dirt. */
@@ -101,18 +156,13 @@ export class SimulationEngine {
   /** The starting arrangement: central nest, scattered food, rocks, initial ants. */
   buildDefaultScene(): void {
     const world = this.world;
+    const rng = world.rng;
     const GRID_W = world.width;
     const GRID_H = world.height;
     const nestX = Math.floor(GRID_W / 2);
     const nestY = Math.floor(GRID_H / 2);
 
-    for (let dx = -3; dx <= 3; dx++) {
-      for (let dy = -3; dy <= 3; dy++) {
-        if (dx * dx + dy * dy <= 10) {
-          world.set(nestX + dx, nestY + dy, Cell.NEST);
-        }
-      }
-    }
+    this.fillDisk(nestX, nestY, 3, Cell.NEST);
 
     const foodSpots = [
       { x: Math.floor(GRID_W * 0.2), y: Math.floor(GRID_H * 0.25) },
@@ -122,16 +172,7 @@ export class SimulationEngine {
       { x: Math.floor(GRID_W * 0.5), y: Math.floor(GRID_H * 0.15) },
     ];
     for (const spot of foodSpots) {
-      const radius = 3 + Math.floor(Math.random() * 3);
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dy = -radius; dy <= radius; dy++) {
-          if (dx * dx + dy * dy <= radius * radius) {
-            const fx = spot.x + dx;
-            const fy = spot.y + dy;
-            if (world.inBounds(fx, fy)) world.set(fx, fy, Cell.FOOD);
-          }
-        }
-      }
+      this.fillDisk(spot.x, spot.y, 3 + rng.int(3), Cell.FOOD);
     }
 
     const rockClusters = [
@@ -142,7 +183,7 @@ export class SimulationEngine {
     for (const rock of rockClusters) {
       for (let dx = -4; dx <= 4; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
-          if (Math.abs(dx) + Math.abs(dy) <= 4 && Math.random() < 0.7) {
+          if (Math.abs(dx) + Math.abs(dy) <= 4 && rng.chance(0.7)) {
             const rx = rock.x + dx;
             const ry = rock.y + dy;
             if (world.inBounds(rx, ry)) world.set(rx, ry, Cell.WALL);
@@ -151,12 +192,7 @@ export class SimulationEngine {
       }
     }
 
-    for (let i = 0; i < SimConfig.colony.initialAnts; i++) {
-      const ax = nestX + Math.floor(Math.random() * 9) - 4;
-      const ay = nestY + Math.floor(Math.random() * 9) - 4;
-      if (world.inBounds(ax, ay)) {
-        this.ants.push(new Ant(ax, ay, nestX, nestY));
-      }
-    }
+    this.spawnAntsNear(nestX, nestY, SimConfig.colony.initialAnts);
+    world.initialFoodMass = world.totalFoodMass();
   }
 }
