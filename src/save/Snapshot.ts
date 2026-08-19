@@ -12,7 +12,6 @@ import { Ant, AntState, AntStateType } from '../sim/Ant';
 import { AntKind, AntKindType, Cell } from '../sim/constants';
 import { DiffusingField } from '../sim/DiffusingField';
 import { Lizard } from '../sim/Lizard';
-import { Rng } from '../sim/Rng';
 import { SimulationEngine } from '../sim/SimulationEngine';
 
 export const SNAPSHOT_VERSION = 1;
@@ -36,6 +35,8 @@ export interface AntSnapshot {
   digCooldown: number;
   returnTicks: number;
   prey: boolean;
+  /** This ant's own Rng state; absent in pre-per-ant-seeding saves. */
+  rngState?: number;
 }
 
 export interface LizardSnapshot {
@@ -56,6 +57,8 @@ export interface WorldSnapshot {
   tickCount: number;
   /** Raw mulberry32 state, so the resumed world draws the same numbers. */
   rngState: number;
+  /** Count of ants ever spawned, so newly hatched ants keep drawing fresh per-ant seeds. */
+  antSpawnCount?: number;
   nestFoodStore: number;
   fireNestFoodStore: number;
   foodDelivered: number;
@@ -163,6 +166,7 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
       digCooldown: ant.digCooldown,
       returnTicks: ant.returnTicks,
       prey: ant.prey,
+      rngState: ant.rng.getState(),
     });
   }
 
@@ -187,6 +191,7 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
     height: world.height,
     tickCount: world.tickCount,
     rngState: world.rng.getState(),
+    antSpawnCount: world.antSpawnCount,
     nestFoodStore: world.nestFoodStore,
     fireNestFoodStore: world.fireNestFoodStore,
     foodDelivered: world.foodDelivered,
@@ -237,6 +242,7 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
 
   world.tickCount = snap.tickCount;
   world.rng.setState(snap.rngState);
+  world.antSpawnCount = snap.antSpawnCount ?? snap.ants.length;
   world.nestFoodStore = snap.nestFoodStore;
   world.fireNestFoodStore = snap.fireNestFoodStore;
   world.foodDelivered = snap.foodDelivered;
@@ -245,11 +251,10 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
   engine.allowSpawn = snap.allowSpawn;
   engine.allowWater = snap.allowWater;
 
-  // A throwaway Rng seeds the constructor's heading; every field is overwritten
-  // below, so the world's own Rng sequence is untouched.
-  const scratch = new Rng(1);
+  // The constructor seed only sets the initial heading, which is overwritten below;
+  // the ant's real Rng state is restored from the snapshot right after.
   engine.ants = snap.ants.map((a) => {
-    const ant = new Ant(a.x, a.y, a.nestX, a.nestY, scratch, a.kind ?? AntKind.HARVESTER);
+    const ant = new Ant(a.x, a.y, a.nestX, a.nestY, 1, a.kind ?? AntKind.HARVESTER);
     ant.state = a.state ?? AntState.SEARCHING;
     ant.carrying = a.carrying;
     ant.dir = a.dir;
@@ -259,6 +264,7 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
     ant.returnTicks = a.returnTicks;
     ant.prey = a.prey ?? true;
     ant.alive = true;
+    if (a.rngState !== undefined) ant.rng.setState(a.rngState);
     return ant;
   });
 

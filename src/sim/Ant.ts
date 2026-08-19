@@ -1,6 +1,6 @@
 import { AntKind, AntKindType, Cell, DIRS, SimConfig } from './constants';
 import type { DiffusingField } from './DiffusingField';
-import type { Rng } from './Rng';
+import { Rng } from './Rng';
 import type { World } from './World';
 
 export const AntState = {
@@ -30,13 +30,15 @@ export class Ant {
   stuckTimer = 0;
   digCooldown = 0;
   returnTicks = 0;
+  /** This ant's own Rng stream — independent of the world's, per AntGame's per-ant seeding. */
+  rng: Rng;
 
   constructor(
     x: number,
     y: number,
     nestX: number,
     nestY: number,
-    rng: Rng,
+    rngSeed: number,
     kind: AntKindType = AntKind.HARVESTER,
   ) {
     this.x = x;
@@ -44,7 +46,8 @@ export class Ant {
     this.nestX = nestX;
     this.nestY = nestY;
     this.kind = kind;
-    this.dir = rng.int(8);
+    this.rng = new Rng(rngSeed);
+    this.dir = this.rng.int(8);
   }
 
   get nestCell(): number {
@@ -173,7 +176,7 @@ export class Ant {
     this.stuckTimer = 0;
 
     // Occasional opportunistic dig even when a path exists, to open shortcuts.
-    if (this.digCooldown <= 0 && world.rng.chance(0.03)) {
+    if (this.digCooldown <= 0 && this.rng.chance(0.03)) {
       const d = DIRS[this.dir];
       const digX = this.x + d.dx;
       const digY = this.y + d.dy;
@@ -188,8 +191,8 @@ export class Ant {
     }
 
     // Random exploration.
-    if (world.rng.chance(0.1)) {
-      const pick = candidates[world.rng.int(candidates.length)];
+    if (this.rng.chance(0.1)) {
+      const pick = candidates[this.rng.int(candidates.length)];
       this.moveTo(pick.nx, pick.ny, pick.idx);
       return;
     }
@@ -197,7 +200,7 @@ export class Ant {
     // Weighted roulette toward stronger pheromone / targets.
     let totalWeight = 0;
     for (const c of candidates) totalWeight += c.weight;
-    let r = world.rng.next() * totalWeight;
+    let r = this.rng.next() * totalWeight;
     for (const c of candidates) {
       r -= c.weight;
       if (r <= 0) {
@@ -239,10 +242,10 @@ export class Ant {
         return;
       }
     }
-    this.dir = (this.dir + 3 + world.rng.int(3)) % 8;
+    this.dir = (this.dir + 3 + this.rng.int(3)) % 8;
     this.stuckTimer++;
     if (this.stuckTimer > 10) {
-      this.dir = world.rng.int(8);
+      this.dir = this.rng.int(8);
       this.stuckTimer = 0;
     }
   }

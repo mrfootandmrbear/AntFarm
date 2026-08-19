@@ -1,6 +1,6 @@
 import { Cell, CellType, SimConfig } from './constants';
 import { DiffusingField } from './DiffusingField';
-import { Rng } from './Rng';
+import { deriveSeed, Rng } from './Rng';
 
 /**
  * The spatial state of the simulation: terrain grid, per-cell food amount, and
@@ -35,6 +35,10 @@ export class World {
   fireFoodDelivered = 0;
   tickCount = 0;
   readonly rng: Rng;
+  /** Original world seed; combined with a spawn index to seed each ant's own Rng. */
+  readonly seed: number;
+  /** Monotonic count of ants ever spawned, used to derive unique per-ant seeds. */
+  antSpawnCount = 0;
   /** Starting food mass, set by eval/scenes so delivery % is meaningful. */
   initialFoodMass = 0;
 
@@ -47,6 +51,7 @@ export class World {
     this.cells.fill(Cell.DIRT);
     this.foodAmount = new Float32Array(size);
     this.blocked = new Uint8Array(size);
+    this.seed = seed;
     this.rng = new Rng(seed);
 
     const p = SimConfig.pheromone;
@@ -75,7 +80,13 @@ export class World {
     this.foodDelivered = 0;
     this.fireFoodDelivered = 0;
     this.tickCount = 0;
+    this.antSpawnCount = 0;
     this.initialFoodMass = 0;
+  }
+
+  /** Next deterministic per-ant seed, independent of the world's own Rng stream. */
+  nextAntSeed(): number {
+    return deriveSeed(this.seed, this.antSpawnCount++);
   }
 
   totalFoodMass(): number {

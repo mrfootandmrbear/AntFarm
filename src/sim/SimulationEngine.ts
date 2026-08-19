@@ -104,7 +104,7 @@ export class SimulationEngine {
         const nx = nest.x + dx;
         const ny = nest.y + dy;
         if (world.inBounds(nx, ny) && world.isPassable(nx, ny)) {
-          this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.rng));
+          this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.nextAntSeed()));
           world.nestFoodStore -= cfg.spawnCost;
           return;
         }
@@ -128,7 +128,7 @@ export class SimulationEngine {
         const nx = nest.x + dx;
         const ny = nest.y + dy;
         if (world.inBounds(nx, ny) && world.isPassable(nx, ny)) {
-          this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.rng, AntKind.FIRE));
+          this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.nextAntSeed(), AntKind.FIRE));
           world.fireNestFoodStore -= cfg.spawnCost;
           return;
         }
@@ -142,7 +142,7 @@ export class SimulationEngine {
     const nest = this.world.findNearestCell(x, y, nestType);
     if (!this.world.isPassable(x, y)) return false;
     const home = nest ?? { x, y };
-    this.ants.push(new Ant(x, y, home.x, home.y, this.world.rng, kind));
+    this.ants.push(new Ant(x, y, home.x, home.y, this.world.nextAntSeed(), kind));
     return true;
   }
 

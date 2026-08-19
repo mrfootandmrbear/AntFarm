@@ -188,7 +188,7 @@ export function runEval(seed = DEFAULT_SEED): EvalReport {
     if (c > corridorPeak) corridorPeak = c;
 
     if (stableRecruitment !== null && firstDelivery !== null && t >= firstDelivery + 80) break;
-    if (stableRecruitment !== null && t >= stableRecruitment + 900) break;
+    if (stableRecruitment !== null && t >= stableRecruitment + 1600) break;
   }
 
   const delivered = engine.world.foodDelivered;

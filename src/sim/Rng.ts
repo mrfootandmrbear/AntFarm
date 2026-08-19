@@ -36,3 +36,17 @@ export class Rng {
     this.state = state >>> 0;
   }
 }
+
+/**
+ * Deterministically derives a per-entity seed from a world seed and an index,
+ * so each entity gets its own independent Rng stream without consuming the
+ * world's own sequence (mirrors AntGame's `"${seed}-${index}"` per-ant seeding).
+ */
+export function deriveSeed(seed: number, index: number): number {
+  let h = (seed ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ index, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
