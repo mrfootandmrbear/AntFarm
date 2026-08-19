@@ -44,15 +44,22 @@ export class LizardRenderer {
       if (!lizard.alive) continue;
       const sprite = this.pool.next(this.walk[0], lizard.y);
       sprite.x = lizard.x * cellSize + half;
-      sprite.y = lizard.y * cellSize + half;
-      sprite.rotation = DIR_ANGLES[lizard.dir] + Math.PI / 2;
-      sprite.scale.set(scale);
       sprite.tint = lizard.swarmTicks > 0 ? HARASSED_TINT : NORMAL_TINT;
+      const baseRot = DIR_ANGLES[lizard.dir] + Math.PI / 2;
       if (lizard.eatingTicks > 0 && this.tongue) {
         sprite.texture = this.tongue;
+        // Flick out on even phases, retract on odd — reads as a tongue strike.
+        const phase = lizard.eatingTicks % 6;
+        const extend = phase >= 3 ? (phase - 2) / 3 : phase / 3;
+        const flick = 0.85 + extend * 0.35;
+        sprite.scale.set(scale * flick);
+        sprite.rotation = baseRot + (extend - 0.5) * 0.18;
       } else {
         sprite.texture = this.walk[(tick + lizard.x * 2 + lizard.y) % walkN];
+        sprite.scale.set(scale);
+        sprite.rotation = baseRot;
       }
+      sprite.y = lizard.y * cellSize + half;
     }
     this.pool.end();
   }

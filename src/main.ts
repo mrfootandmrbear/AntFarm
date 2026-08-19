@@ -2,6 +2,7 @@ import './style.css';
 import { SimulationEngine } from './sim/SimulationEngine';
 import { SimConfig } from './sim/constants';
 import { PixiRenderer } from './render/PixiRenderer';
+import { fitCanvasToStage } from './render/ViewportFit';
 import { clearSave, loadWorld, readSave, summarize } from './save/SaveStore';
 import { UI } from './ui/UI';
 import { askStartChoice } from './ui/StartChooser';
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
   const renderer = new PixiRenderer();
   const stage = document.getElementById('stage')!;
   await renderer.init(stage, engine.world, CELL_SIZE);
+  fitCanvasToStage(stage, renderer.app.canvas);
 
   const ui = new UI(engine, renderer);
 

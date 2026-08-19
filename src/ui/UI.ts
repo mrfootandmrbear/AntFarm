@@ -231,17 +231,36 @@ export class UI {
 
     const viewGroup = el('div', 'bar-group');
     viewGroup.appendChild(el('div', 'group-label', 'Scent'));
-    const trailBtn = document.createElement('button');
-    trailBtn.className = 'btn';
-    trailBtn.textContent = this.renderer.showPheromones ? 'Scent: On' : 'Scent: Off';
-    if (this.renderer.showPheromones) trailBtn.classList.add('active');
-    trailBtn.addEventListener('click', () => {
+    const scentBtn = document.createElement('button');
+    scentBtn.className = 'btn';
+    const scentLabels: Record<string, string> = {
+      all: 'Scent: All',
+      food: 'Scent: To food',
+      home: 'Scent: To nest',
+      off: 'Scent: Off',
+    };
+    const updateScentBtn = (): void => {
       const r = this.renderer;
-      r.showPheromones = !r.showPheromones;
-      trailBtn.textContent = r.showPheromones ? 'Scent: On' : 'Scent: Off';
-      trailBtn.classList.toggle('active', r.showPheromones);
+      const key = r.showPheromones ? r.scentMode : 'off';
+      scentBtn.textContent = scentLabels[key];
+      scentBtn.classList.toggle('active', r.showPheromones);
+    };
+    updateScentBtn();
+    scentBtn.addEventListener('click', () => {
+      const r = this.renderer;
+      if (!r.showPheromones) {
+        r.showPheromones = true;
+        r.scentMode = 'all';
+      } else if (r.scentMode === 'all') {
+        r.scentMode = 'food';
+      } else if (r.scentMode === 'food') {
+        r.scentMode = 'home';
+      } else if (r.scentMode === 'home') {
+        r.showPheromones = false;
+      }
+      updateScentBtn();
     });
-    viewGroup.appendChild(trailBtn);
+    viewGroup.appendChild(scentBtn);
     bar.appendChild(viewGroup);
 
     const actionGroup = el('div', 'bar-group');

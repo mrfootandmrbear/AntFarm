@@ -12,6 +12,7 @@ import type { World } from '../sim/World';
 import { FireAntRenderer } from './FireAntRenderer';
 import { HarvesterRenderer } from './HarvesterRenderer';
 import { LizardRenderer } from './LizardRenderer';
+import { TerrainAtlas, proceduralDirt, proceduralGrass } from './TerrainTiles';
 import { assetUrl, loadTexture } from './textures';
 
 /**
@@ -26,6 +27,8 @@ export class PixiRenderer {
 
   /** Soft vapor overlay. Player-facing name is "Scent". */
   showPheromones = true;
+  /** Which trails to draw: all combined, food-seeking only, or homeward only. */
+  scentMode: 'all' | 'food' | 'home' = 'all';
 
   private terrainBuf!: Uint8Array;
   private terrainSource!: BufferImageSource;
@@ -50,6 +53,7 @@ export class PixiRenderer {
   private nestSpriteTex: Texture | null = null;
   private fireNestSpriteTex: Texture | null = null;
   private rockSpriteTex: Texture | null = null;
+  private terrainAtlas: TerrainAtlas | null = null;
   private sceneryDirty = true;
   private sceneryTick = -1;
 
@@ -99,9 +103,6 @@ export class PixiRenderer {
     this.sceneryContainer = new Container();
     this.app.stage.addChild(this.sceneryContainer);
 
-    this.sceneryContainer = new Container();
-    this.app.stage.addChild(this.sceneryContainer);
-
     this.creatureLayer = new Container();
     this.creatureLayer.sortableChildren = true;
     this.app.stage.addChild(this.creatureLayer);
@@ -119,6 +120,7 @@ export class PixiRenderer {
     this.nestSpriteTex = await loadTexture(assetUrl('nest.png'));
     this.fireNestSpriteTex = await loadTexture(assetUrl('fire-nest.png'));
     this.rockSpriteTex = await loadTexture(assetUrl('rock.png'));
+    this.terrainAtlas = await TerrainAtlas.load();
 
     this.cellNoise = new Int8Array(w * h);
     for (let i = 0; i < this.cellNoise.length; i++) {
@@ -162,6 +164,8 @@ export class PixiRenderer {
     const tick = world.tickCount;
     const height = world.heightMap;
     const relief = world.hasRelief;
+    const atlas = this.terrainAtlas;
+    const tiles = atlas?.ready ?? false;
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -172,65 +176,125 @@ export class PixiRenderer {
         let g: number;
         let b: number;
 
-        switch (cell) {
-          case Cell.EMPTY:
-          case Cell.DIRT:
-            {
-              const broad = Math.sin(x * 0.055) * 5 + Math.cos(y * 0.047) * 4 + Math.sin((x + y) * 0.021) * 3;
-              r = 145 + broad + noise * 0.45;
-              g = 119 + broad * 0.72 + noise * 0.35;
-              b = 75 + broad * 0.35 + (noise >> 2);
+        if (tiles && atlas) {
+          switch (cell) {
+            case Cell.EMPTY:
+              [r, g, b] = atlas.sampleSet(atlas.grass, x, y);
+              break;
+            case Cell.DIRT:
+              [r, g, b] = atlas.sampleSet(atlas.dirt, x, y);
+              break;
+            case Cell.WALL:
+              [r, g, b] = atlas.sampleSet(atlas.wall, x, y);
+              break;
+            case Cell.WATER: {
+              [r, g, b] = atlas.sampleSet(atlas.water, x + (tick >> 2), y);
+              const shimmer = Math.sin(x * 0.3 + y * 0.2 + tick * 0.04) * 10;
+              r += shimmer * 0.35;
+              g += shimmer * 0.55;
+              b += shimmer * 0.25;
+              if (
+                (x > 0 && cells[i - 1] !== Cell.WATER) ||
+                (x + 1 < w && cells[i + 1] !== Cell.WATER) ||
+                (y > 0 && cells[i - w] !== Cell.WATER) ||
+                (y + 1 < h && cells[i + w] !== Cell.WATER)
+              ) {
+                r += 28;
+                g += 32;
+                b += 18;
+              }
+              break;
             }
-            break;
-          case Cell.WALL: {
-            r = 91 + noise * 0.4;
-            g = 82 + noise * 0.35;
-            b = 68 + noise * 0.25;
-            break;
-          }
-          case Cell.WATER: {
-            const shimmer = Math.sin(x * 0.3 + y * 0.2 + tick * 0.04) * 8;
-            r = 40 + shimmer;
-            g = 100 + shimmer;
-            b = 170 + shimmer * 0.5;
-            // Shore foam: lighten cells bordering dry ground.
-            if (
-              (x > 0 && cells[i - 1] !== Cell.WATER) ||
-              (x + 1 < w && cells[i + 1] !== Cell.WATER) ||
-              (y > 0 && cells[i - w] !== Cell.WATER) ||
-              (y + 1 < h && cells[i + w] !== Cell.WATER)
-            ) {
-              r += 28;
-              g += 32;
-              b += 18;
+            case Cell.FOOD: {
+              [r, g, b] = atlas.sampleSet(atlas.dirt, x, y);
+              const brightness = 0.55 + world.foodAmount[i] * 0.45;
+              r = r * 0.55 * brightness + 40;
+              g = g * 0.85 * brightness + 50;
+              b = b * 0.35 * brightness + 10;
+              break;
             }
-            break;
+            case Cell.NEST: {
+              [r, g, b] = atlas.sampleSet(atlas.dirt, x, y);
+              const pulse = Math.sin(tick * 0.03) * 6;
+              r = r * 0.85 + 45 + pulse;
+              g = g * 0.55 + 15 + pulse * 0.25;
+              b = b * 0.45 + 8;
+              break;
+            }
+            case Cell.FIRE_NEST: {
+              [r, g, b] = atlas.sampleSet(atlas.dirt, x, y);
+              const pulse = Math.sin(tick * 0.03) * 6;
+              r = r * 0.65 + 35 + pulse;
+              g = g * 0.35 + 8;
+              b = b * 0.28 + 4;
+              break;
+            }
+            default:
+              r = 0;
+              g = 0;
+              b = 0;
           }
-          case Cell.FOOD: {
-            const brightness = 0.5 + world.foodAmount[i] * 0.5;
-            r = 92 * brightness + noise;
-            g = 146 * brightness + noise;
-            b = 53 * brightness + noise * 0.3;
-            break;
+          // Slight per-cell grain so tiles do not look stamped.
+          r += noise * 0.35;
+          g += noise * 0.28;
+          b += noise * 0.2;
+        } else {
+          switch (cell) {
+            case Cell.EMPTY:
+              [r, g, b] = proceduralGrass(x, y, noise);
+              break;
+            case Cell.DIRT:
+              [r, g, b] = proceduralDirt(x, y, noise);
+              break;
+            case Cell.WALL: {
+              r = 91 + noise * 0.4;
+              g = 82 + noise * 0.35;
+              b = 68 + noise * 0.25;
+              break;
+            }
+            case Cell.WATER: {
+              const shimmer = Math.sin(x * 0.3 + y * 0.2 + tick * 0.04) * 8;
+              r = 40 + shimmer;
+              g = 100 + shimmer;
+              b = 170 + shimmer * 0.5;
+              if (
+                (x > 0 && cells[i - 1] !== Cell.WATER) ||
+                (x + 1 < w && cells[i + 1] !== Cell.WATER) ||
+                (y > 0 && cells[i - w] !== Cell.WATER) ||
+                (y + 1 < h && cells[i + w] !== Cell.WATER)
+              ) {
+                r += 28;
+                g += 32;
+                b += 18;
+              }
+              break;
+            }
+            case Cell.FOOD: {
+              const brightness = 0.5 + world.foodAmount[i] * 0.5;
+              r = 92 * brightness + noise;
+              g = 146 * brightness + noise;
+              b = 53 * brightness + noise * 0.3;
+              break;
+            }
+            case Cell.NEST: {
+              const pulse = Math.sin(tick * 0.03) * 8;
+              r = 142 + pulse + noise;
+              g = 79 + pulse * 0.3;
+              b = 49 + pulse * 0.3;
+              break;
+            }
+            case Cell.FIRE_NEST: {
+              const pulse = Math.sin(tick * 0.03) * 8;
+              r = 96 + pulse + noise;
+              g = 43 + pulse * 0.2;
+              b = 29;
+              break;
+            }
+            default:
+              r = 0;
+              g = 0;
+              b = 0;
           }
-          case Cell.NEST: {
-            const pulse = Math.sin(tick * 0.03) * 8;
-            r = 142 + pulse + noise;
-            g = 79 + pulse * 0.3;
-            b = 49 + pulse * 0.3;
-            break;
-          }
-          case Cell.FIRE_NEST: {
-            const pulse = Math.sin(tick * 0.03) * 8;
-            r = 96 + pulse + noise;
-            g = 43 + pulse * 0.2;
-            b = 29;
-            break;
-          }
-          default:
-            r = 0;
-            g = 0;
-            b = 0;
         }
 
         // Relief: raised ground catches the light, hollows sit in shadow, and a
@@ -289,10 +353,17 @@ export class PixiRenderer {
         continue;
       }
       // Combined scent: harvester trails are warm/cool mist; fire-ant trails are redder haze.
-      const fv = food[i];
-      const hv = home[i];
-      const ff = fireFood[i];
-      const fh = fireHome[i];
+      let fv = food[i];
+      let hv = home[i];
+      let ff = fireFood[i];
+      let fh = fireHome[i];
+      if (this.scentMode === 'food') {
+        hv = 0;
+        fh = 0;
+      } else if (this.scentMode === 'home') {
+        fv = 0;
+        ff = 0;
+      }
       const rawDens = Math.min(fv / 5 + hv / 8 + ff / 5 + fh / 8, 1);
       const dens = Math.pow(rawDens, 0.72);
       if (dens < 0.02) {
@@ -307,7 +378,7 @@ export class PixiRenderer {
       const drift = 0.88 + Math.sin(tick * 0.018 + ix * 0.11 + iy * 0.09) * 0.12;
       const harvest = fv + hv;
       const fire = ff + fh;
-      const t = fv / (harvest + 0.0001);
+      const t = harvest > 0.0001 ? fv / harvest : 0.5;
       let r = 210 - t * 40;
       let g = 170 + t * 50;
       let b = 110 + (1 - t) * 80;
@@ -380,6 +451,28 @@ export class PixiRenderer {
 
         const cx = sx / members.length;
         const cy = sy / members.length;
+        let avgHeight = 0;
+        if (type === Cell.NEST || type === Cell.FIRE_NEST) {
+          const hm = this.world.heightMap;
+          for (const c of members) avgHeight += hm[c];
+          avgHeight /= members.length;
+        }
+
+        if (type === Cell.NEST || type === Cell.FIRE_NEST) {
+          const moundTex = texture;
+          const mound = new Sprite(moundTex);
+          mound.anchor.set(0.5);
+          mound.x = (cx + 0.5) * this.cellSize;
+          mound.y = (cy + 0.5) * this.cellSize;
+          const diameter = Math.max(6, Math.min(16, Math.sqrt(members.length) * 2.6));
+          const reliefBoost = 1 + avgHeight * (type === Cell.FIRE_NEST ? 4.2 : 2.8);
+          const moundTarget = diameter * this.cellSize * reliefBoost;
+          mound.scale.set(moundTarget / Math.max(moundTex.width, moundTex.height));
+          mound.alpha = type === Cell.FIRE_NEST ? 0.42 : 0.38;
+          mound.tint = type === Cell.FIRE_NEST ? 0xffc8a8 : 0xffdcb0;
+          this.sceneryContainer.addChild(mound);
+        }
+
         const sprite = new Sprite(texture);
         sprite.anchor.set(0.5);
         sprite.x = (cx + 0.5) * this.cellSize;
@@ -387,7 +480,11 @@ export class PixiRenderer {
         const diameter = Math.max(5, Math.min(14, Math.sqrt(members.length) * 2.3));
         const target = diameter * this.cellSize;
         const baseScale = target / Math.max(texture.width, texture.height);
-        sprite.scale.set(baseScale);
+        if (type === Cell.NEST || type === Cell.FIRE_NEST) {
+          sprite.scale.set(baseScale * (1 + avgHeight * 0.35));
+        } else {
+          sprite.scale.set(baseScale);
+        }
         if (type === Cell.FOOD) {
           this.foodPatches.push({ sprite, cells: members, baseScale });
           sprite.alpha = 0.95;
