@@ -82,12 +82,12 @@ export const SimConfig = {
   },
   fireAnt: {
     /** Same-cell bump: aggressive but not an instant wipe. */
-    bumpKillChance: 0.22,
+    bumpKillChance: 0.1,
     /** Neighboring cell: slow displacement along shared trails. */
-    adjacentKillChance: 0.003,
+    adjacentKillChance: 0.002,
     /** Harvesters clustered on a fire ant can sting back. */
-    swarmDefenseCount: 3,
-    swarmDefenseChance: 0.012,
+    swarmDefenseCount: 2,
+    swarmDefenseChance: 0.02,
   },
   lizard: {
     energyDrainPerTick: 0.00006,
