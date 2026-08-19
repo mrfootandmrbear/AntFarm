@@ -42,6 +42,7 @@ export interface EvalReport {
   multiFood?: MultiFoodResult;
   chokepoint?: ChokepointResult;
   soak?: SoakResult;
+  mound?: MoundResult;
 }
 
 export interface PulseResult {
@@ -105,6 +106,22 @@ export interface ChokepointResult {
   pastTheWall: number;
   corridorTrail: number;
   delivered: number;
+}
+
+export interface MoundSeedResult {
+  seed: number;
+  harvMean: number;
+  fireMean: number;
+  harvPeak: number;
+  firePeak: number;
+  pass: boolean;
+}
+
+export interface MoundResult {
+  pass: boolean;
+  notes: string[];
+  seeds: MoundSeedResult[];
+  passCount: number;
 }
 
 export interface SoakResult {
@@ -498,6 +515,83 @@ export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
 }
 
 /**
+ * E_MOUND: fire ants dome, harvesters flatten.
+ *
+ * Fire ants pelletize spoil onto their nest, harvesters carry it out to the rim
+ * of a clearing (see {@link SimConfig.mound}) — so left running, a fire colony's
+ * entrance should rise while a harvester's stays low and flat. Checked over the
+ * Chebyshev-8 neighborhood used for {@link SimConfig.mound.fireMoundRadius},
+ * across three seeds since terrain settling is exactly the kind of slow, noisy
+ * process a single seed can get lucky or unlucky on.
+ */
+const MOUND_SEEDS = [1842, 7, 99];
+const MOUND_PEAK_THRESHOLD = 0.3;
+
+function meanAndPeakHeight(
+  engine: SimulationEngine,
+  cx: number,
+  cy: number,
+  radius: number,
+): { mean: number; peak: number } {
+  let sum = 0;
+  let count = 0;
+  let peak = -Infinity;
+  for (let y = cy - radius; y <= cy + radius; y++) {
+    for (let x = cx - radius; x <= cx + radius; x++) {
+      const h = engine.world.heightAt(x, y);
+      sum += h;
+      count++;
+      if (h > peak) peak = h;
+    }
+  }
+  return { mean: count > 0 ? sum / count : 0, peak };
+}
+
+export function runMoundFormation(seeds = MOUND_SEEDS): MoundResult {
+  const notes: string[] = [];
+  const harvNest = { x: 24, y: 40 };
+  const fireNest = { x: 96, y: 40 };
+  const pile = { x: 60, y: 40 };
+  const perColony = 60;
+  const horizon = 30_000;
+  const radius = SimConfig.mound.fireMoundRadius;
+
+  const results: MoundSeedResult[] = seeds.map((seed) => {
+    const e = new SimulationEngine(W, H, seed);
+    e.allowWater = false;
+    e.fillDisk(harvNest.x, harvNest.y, 3, Cell.NEST);
+    e.fillDisk(fireNest.x, fireNest.y, 3, Cell.FIRE_NEST);
+    e.fillDisk(pile.x, pile.y, 5, Cell.FOOD);
+    e.spawnAntsNear(harvNest.x, harvNest.y, perColony);
+    e.spawnAntsNear(fireNest.x, fireNest.y, perColony, AntKind.FIRE);
+    e.world.initialFoodMass = e.world.totalFoodMass();
+
+    while (e.world.tickCount < horizon) e.tick();
+
+    const harv = meanAndPeakHeight(e, harvNest.x, harvNest.y, radius);
+    const fire = meanAndPeakHeight(e, fireNest.x, fireNest.y, radius);
+
+    const pass = fire.mean > harv.mean && fire.peak > MOUND_PEAK_THRESHOLD && harv.peak < fire.peak;
+    return { seed, harvMean: harv.mean, fireMean: fire.mean, harvPeak: harv.peak, firePeak: fire.peak, pass };
+  });
+
+  const passCount = results.filter((r) => r.pass).length;
+  for (const r of results) {
+    if (!r.pass) {
+      notes.push(
+        `seed ${r.seed}: fire mean ${r.fireMean.toFixed(3)}/peak ${r.firePeak.toFixed(3)} vs ` +
+          `harvester mean ${r.harvMean.toFixed(3)}/peak ${r.harvPeak.toFixed(3)}`,
+      );
+    }
+  }
+
+  const pass = passCount >= 2;
+  if (pass) notes.push(`fire colony domed higher than harvester in ${passCount}/${seeds.length} seeds`);
+
+  return { pass, notes, seeds: results, passCount };
+}
+
+/**
  * E_LIZARD: a colony with a horned lizard loose in it should shrink.
  *
  * Paired with a lizard-free control so the drop has to be predation rather than
@@ -838,6 +932,9 @@ export function formatReport(r: EvalReport): string {
     r.soak
       ? `SOAK: ${yn(r.soak.pass)} — ${(r.soak.ticks / 1000).toFixed(0)}k ticks; ants ${r.soak.minAnts}..${r.soak.maxAnts} → ${r.soak.endAnts}; granary ${r.soak.minStore.toFixed(2)}..${r.soak.maxStore.toFixed(2)} of ${r.soak.granaryCeiling.toFixed(0)}; food left ${r.soak.foodLeft.toFixed(0)}; ${r.soak.nonFiniteCells} non-finite${r.soak.notes.length ? ' — ' + r.soak.notes.join('; ') : ''}`
       : '',
+    r.mound
+      ? `MOUND: ${yn(r.mound.pass)} — ${r.mound.passCount}/${r.mound.seeds.length} seeds domed (${r.mound.seeds.map((s) => `${s.seed}:${s.pass ? 'pass' : 'fail'} fire ${s.fireMean.toFixed(3)}/${s.firePeak.toFixed(3)} vs harv ${s.harvMean.toFixed(3)}/${s.harvPeak.toFixed(3)}`).join(', ')})${r.mound.notes.length ? ' — ' + r.mound.notes.join('; ') : ''}`
+      : '',
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -854,9 +951,12 @@ if (isMain) {
   report.predation = runLizardPredation(seed);
   report.multiFood = runMultiFood(seed);
   report.chokepoint = runChokepoint(seed);
-  // The soak is ~20s on its own. `--skip-soak` keeps the tuner's loop short;
-  // CI runs the whole thing.
-  if (!process.argv.includes('--skip-soak')) report.soak = runSoak(seed);
+  // The soak and the mound eval are the two slow ones (~20s each). `--skip-soak`
+  // keeps the tuner's loop short; CI runs the whole thing.
+  if (!process.argv.includes('--skip-soak')) {
+    report.soak = runSoak(seed);
+    report.mound = runMoundFormation();
+  }
   console.log(formatReport(report));
   process.exit(report.core.pass ? 0 : 1);
 }
