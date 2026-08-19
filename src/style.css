@@ -304,3 +304,54 @@ body {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- Continue / new world ---------- */
+.start-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.start-card {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 26px 30px;
+  max-width: 380px;
+  box-shadow: 0 18px 40px rgb(0 0 0 / 45%);
+  text-align: center;
+}
+
+.start-title {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  color: var(--accent-soft);
+}
+
+.start-detail {
+  margin: 0 0 18px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.start-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.start-primary {
+  background: var(--active);
+  border-color: var(--active-border);
+}
+
+.start-warning {
+  margin: 14px 0 0;
+  font-size: 0.7rem;
+  color: var(--text-faint);
+}

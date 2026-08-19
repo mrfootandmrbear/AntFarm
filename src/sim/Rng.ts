@@ -26,4 +26,13 @@ export class Rng {
   chance(p: number): boolean {
     return this.next() < p;
   }
+
+  /** Current internal state, so a saved world resumes the same sequence. */
+  getState(): number {
+    return this.state >>> 0;
+  }
+
+  setState(state: number): void {
+    this.state = state >>> 0;
+  }
 }

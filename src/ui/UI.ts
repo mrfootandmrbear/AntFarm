@@ -1,4 +1,5 @@
 import { Cell, CellType } from '../sim/constants';
+import { saveWorld } from '../save/SaveStore';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { PixiRenderer } from '../render/PixiRenderer';
 
@@ -44,6 +45,8 @@ export class UI {
   private lastPaintY = -1;
 
   private pauseBtn!: HTMLButtonElement;
+  private saveBtn!: HTMLButtonElement;
+  private saveFlashTimer = 0;
   private readoutEl!: HTMLElement;
   private brushPreview!: HTMLElement;
 
@@ -156,6 +159,34 @@ export class UI {
       });
       transport.appendChild(btn);
     }
+
+    this.saveBtn = document.createElement('button');
+    this.saveBtn.className = 'btn';
+    this.saveBtn.textContent = '⌸ Save';
+    this.saveBtn.title = 'Keep this world so it is here next time';
+    this.saveBtn.addEventListener('click', () => this.saveNow());
+    transport.appendChild(this.saveBtn);
+  }
+
+  /** Manual save. Auto-saves go through {@link autoSave} and say nothing. */
+  saveNow(): void {
+    const ok = saveWorld(this.engine);
+    this.flashSave(ok ? 'Saved' : "Can't save");
+  }
+
+  /** Silent periodic save — no button flash, no interruption. */
+  autoSave(): void {
+    saveWorld(this.engine);
+  }
+
+  private flashSave(text: string): void {
+    window.clearTimeout(this.saveFlashTimer);
+    this.saveBtn.textContent = text;
+    this.saveBtn.classList.add('active');
+    this.saveFlashTimer = window.setTimeout(() => {
+      this.saveBtn.textContent = '⌸ Save';
+      this.saveBtn.classList.remove('active');
+    }, 1200);
   }
 
   private togglePause(): void {
@@ -334,6 +365,11 @@ export class UI {
   // ---------- Keyboard ----------
   private bindKeyboard(): void {
     document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        this.saveNow();
+        return;
+      }
       const tool = TOOLS.find((t) => t.key === e.key);
       if (tool) {
         this.selectTool(tool);

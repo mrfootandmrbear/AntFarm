@@ -105,4 +105,8 @@ export const SimConfig = {
     cullIntervalTicks: 100,
     waterIntervalTicks: 3,
   },
+  save: {
+    /** Ticks between silent auto-saves of the live world. */
+    autoSaveIntervalTicks: 500,
+  },
 } as const;
