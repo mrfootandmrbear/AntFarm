@@ -1,5 +1,5 @@
 import { Ant } from './Ant';
-import { AntKind, AntKindType, Cell, CellType } from './constants';
+import { AntKind, AntKindType, Cell, CellType, Layer } from './constants';
 import { SimConfig } from './constants';
 import { Lizard } from './Lizard';
 import { World } from './World';
@@ -81,6 +81,8 @@ export class SimulationEngine {
       let nearbyHarvesters = 0;
       for (const h of this.ants) {
         if (!h.alive || h.kind !== AntKind.HARVESTER) continue;
+        // Same x/y on different layers is metres of earth apart, not a bump.
+        if (h.layer !== f.layer) continue;
         const d = Math.max(Math.abs(h.x - f.x), Math.abs(h.y - f.y));
         if (d > 1) continue;
         nearbyHarvesters++;
@@ -231,10 +233,11 @@ export class SimulationEngine {
     return n;
   }
 
+  /** Spread of ants out looking for food. Ants working below are not exploring. */
   searchingSpread(): number {
     const xs: number[] = [];
     for (const a of this.ants) {
-      if (a.alive && !a.carrying) xs.push(a.x);
+      if (a.alive && !a.carrying && a.layer === Layer.SURFACE) xs.push(a.x);
     }
     if (xs.length < 2) return 0;
     const mean = xs.reduce((s, v) => s + v, 0) / xs.length;

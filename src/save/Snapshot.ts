@@ -9,7 +9,7 @@
  * a fresh seed by design.
  */
 import { Ant, AntState, AntStateType } from '../sim/Ant';
-import { AntKind, AntKindType, Cell } from '../sim/constants';
+import { AntKind, AntKindType, Cell, Layer, LayerType, Under } from '../sim/constants';
 import { DiffusingField } from '../sim/DiffusingField';
 import { Lizard } from '../sim/Lizard';
 import { SimulationEngine } from '../sim/SimulationEngine';
@@ -35,9 +35,12 @@ export interface AntSnapshot {
   digCooldown: number;
   returnTicks: number;
   prey: boolean;
-  /** Holding a pellet of excavated soil. Absent in pre-mound saves. */
-  soil?: boolean;
+  /** Pellets of excavated soil being carried. Absent in pre-mound saves. */
+  soilLoad?: number;
   soilTicks?: number;
+  /** Which layer the ant is on. Absent in saves from before the nest below. */
+  layer?: LayerType;
+  shiftTicks?: number;
   /** Cumulative turn for lost-ant recovery; absent in pre-abort-trip saves. */
   cumulativeTurn?: number;
   /** This ant's own Rng state; absent in pre-per-ant-seeding saves. */
@@ -75,6 +78,10 @@ export interface WorldSnapshot {
   foodAmount: FloatBlob;
   /** Surface relief. Added in version 2; older saves are simply flat. */
   heightMap: FloatBlob;
+  /** The nest below the nest: cell types, per-cell depth, and who cut each cell. */
+  underground: string;
+  tunnelDepth: FloatBlob;
+  tunnelOwner: string;
   homeField: FloatBlob;
   foodField: FloatBlob;
   fireHomeField: FloatBlob;
@@ -173,8 +180,10 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
       digCooldown: ant.digCooldown,
       returnTicks: ant.returnTicks,
       prey: ant.prey,
-      soil: ant.soil,
+      soilLoad: ant.soilLoad,
       soilTicks: ant.soilTicks,
+      layer: ant.layer,
+      shiftTicks: ant.shiftTicks,
       rngState: ant.rng.getState(),
       cumulativeTurn: ant.cumulativeTurn,
     });
@@ -212,6 +221,9 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
     cells: bytesToBase64(world.cells),
     foodAmount: encodeFloats(world.foodAmount),
     heightMap: encodeFloats(world.heightMap),
+    underground: bytesToBase64(world.underground),
+    tunnelDepth: encodeFloats(world.tunnelDepth),
+    tunnelOwner: bytesToBase64(world.tunnelOwner),
     homeField: encodeFloats(world.homeField.current),
     foodField: encodeFloats(world.foodField.current),
     fireHomeField: encodeFloats(world.fireHomeField.current),
@@ -257,6 +269,25 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
     world.blocked[i] = c === Cell.WALL || c === Cell.WATER ? 1 : 0;
   }
 
+  if (snap.underground) {
+    const under = base64ToBytes(snap.underground);
+    if (under.length !== world.underground.length) {
+      throw new Error(`underground count ${under.length} != ${world.underground.length}`);
+    }
+    world.underground.set(under);
+    world.tunnelOwner.set(base64ToBytes(snap.tunnelOwner));
+    decodeFloatsInto(snap.tunnelDepth, world.tunnelDepth);
+  } else {
+    world.underground.fill(Under.SOLID);
+    world.tunnelDepth.fill(0);
+    world.tunnelOwner.fill(0);
+  }
+  // `tunnelCount` is a cache over `underground`, so recount rather than trust the file.
+  world.tunnelCount = 0;
+  for (let i = 0; i < world.underground.length; i++) {
+    if (world.underground[i] !== Under.SOLID) world.tunnelCount++;
+  }
+
   applyField(snap.homeField, world.homeField);
   applyField(snap.foodField, world.foodField);
   applyField(snap.fireHomeField, world.fireHomeField);
@@ -285,8 +316,10 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
     ant.digCooldown = a.digCooldown;
     ant.returnTicks = a.returnTicks;
     ant.prey = a.prey ?? true;
-    ant.soil = a.soil ?? false;
+    ant.soilLoad = a.soilLoad ?? 0;
     ant.soilTicks = a.soilTicks ?? 0;
+    ant.layer = a.layer ?? Layer.SURFACE;
+    ant.shiftTicks = a.shiftTicks ?? 0;
     ant.alive = true;
     if (a.rngState !== undefined) ant.rng.setState(a.rngState);
     ant.cumulativeTurn = a.cumulativeTurn ?? 0;

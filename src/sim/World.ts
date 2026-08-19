@@ -1,4 +1,4 @@
-import { Cell, CellType, SimConfig } from './constants';
+import { Cell, CellType, SimConfig, Under, UnderType } from './constants';
 import { DiffusingField } from './DiffusingField';
 import { deriveSeed, Rng } from './Rng';
 
@@ -23,6 +23,19 @@ export class World {
   heightMap: Float32Array;
   /** True once any cell has been raised or lowered — lets flat worlds skip work. */
   hasRelief = false;
+
+  /**
+   * What lies beneath each surface cell ({@link Under}). Same dimensions as the
+   * terrain grid — the underground is a plan view of the nest, sharing x and y
+   * with the ground above it and carrying its own depth per cell.
+   */
+  underground: Uint8Array;
+  /** How far below the surface each passage cell sits. Meaningless where SOLID. */
+  tunnelDepth: Float32Array;
+  /** Which colony cut each passage cell: 0 nobody, 1 harvester, 2 fire. */
+  tunnelOwner: Uint8Array;
+  /** Count of passage cells, so an untouched world can skip the whole layer. */
+  tunnelCount = 0;
   /** Scratch buffer for {@link settleHeight}, allocated on first use. */
   private heightDelta: Float32Array | null = null;
 
@@ -61,6 +74,9 @@ export class World {
     this.cells.fill(Cell.DIRT);
     this.foodAmount = new Float32Array(size);
     this.heightMap = new Float32Array(size);
+    this.underground = new Uint8Array(size);
+    this.tunnelDepth = new Float32Array(size);
+    this.tunnelOwner = new Uint8Array(size);
     this.blocked = new Uint8Array(size);
     this.seed = seed;
     this.rng = new Rng(seed);
@@ -83,6 +99,10 @@ export class World {
     this.foodAmount.fill(0);
     this.heightMap.fill(0);
     this.hasRelief = false;
+    this.underground.fill(Under.SOLID);
+    this.tunnelDepth.fill(0);
+    this.tunnelOwner.fill(0);
+    this.tunnelCount = 0;
     this.blocked.fill(0);
     this.homeField.clear();
     this.foodField.clear();
@@ -145,9 +165,45 @@ export class World {
 
   set(x: number, y: number, type: CellType): void {
     const i = this.idx(x, y);
+    const was = this.cells[i];
     this.cells[i] = type;
     this.foodAmount[i] = type === Cell.FOOD ? 1.0 : 0;
     this.blocked[i] = type === Cell.WALL || type === Cell.WATER ? 1 : 0;
+
+    // A mound is a doorway: painting one opens the way below it, and painting
+    // it away seals that doorway again unless ants have already cut past it.
+    const isNest = type === Cell.NEST || type === Cell.FIRE_NEST;
+    const wasNest = was === Cell.NEST || was === Cell.FIRE_NEST;
+    if (isNest) {
+      this.carve(i, Under.ENTRANCE, 0, type === Cell.FIRE_NEST ? 2 : 1);
+    } else if (wasNest && this.underground[i] === Under.ENTRANCE) {
+      this.underground[i] = Under.SOLID;
+      this.tunnelOwner[i] = 0;
+      this.tunnelCount--;
+    }
+  }
+
+  /** Underground cell type at (x, y). Out of bounds reads as solid earth. */
+  under(x: number, y: number): number {
+    if (!this.inBounds(x, y)) return Under.SOLID;
+    return this.underground[this.idx(x, y)];
+  }
+
+  /** True where an ant below ground can stand: tunnel, chamber or entrance. */
+  isPassage(x: number, y: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    return this.underground[this.idx(x, y)] !== Under.SOLID;
+  }
+
+  /**
+   * Turn one cell of solid earth into passage. Idempotent on the cell count, so
+   * promoting a tunnel to a chamber does not double-count it.
+   */
+  carve(i: number, type: UnderType, depth: number, owner: number): void {
+    if (this.underground[i] === Under.SOLID) this.tunnelCount++;
+    this.underground[i] = type;
+    this.tunnelDepth[i] = depth;
+    this.tunnelOwner[i] = owner;
   }
 
   /** Surface height at (x, y). Out of bounds reads as flat ground. */

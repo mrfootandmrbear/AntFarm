@@ -1,4 +1,13 @@
-import { AntKind, AntKindType, Cell, DIRS, SimConfig } from './constants';
+import {
+  AntKind,
+  AntKindType,
+  Cell,
+  DIRS,
+  Layer,
+  LayerType,
+  SimConfig,
+  Under,
+} from './constants';
 import type { DiffusingField } from './DiffusingField';
 import { Rng } from './Rng';
 import type { World } from './World';
@@ -43,10 +52,14 @@ export class Ant {
   stuckTimer = 0;
   digCooldown = 0;
   returnTicks = 0;
-  /** Holding a pellet of excavated soil, on its way to the surface. */
-  soil = false;
+  /** Pellets of excavated soil being carried, up to `loadCapacity`. */
+  soilLoad = 0;
   /** Ticks the current pellet has been held — a pellet carried too long is scattered. */
   soilTicks = 0;
+  /** Surface or underground. The two layers share x/y but never see each other. */
+  layer: LayerType = Layer.SURFACE;
+  /** Ticks into the current underground shift. */
+  shiftTicks = 0;
   /** This ant's own Rng stream — independent of the world's, per AntGame's per-ant seeding. */
   rng: Rng;
   /** Sum of turning (in eighth-turns) since the last pickup/delivery — a lost-ant signal. */
@@ -91,12 +104,17 @@ export class Ant {
     }
     if (this.digCooldown > 0) this.digCooldown--;
 
+    if (this.layer === Layer.UNDERGROUND) {
+      this.workBelow(world);
+      return;
+    }
+
     if (world.get(this.x, this.y) === Cell.WATER) {
       this.alive = false;
       return;
     }
 
-    if (this.soil) this.carrySoil(world);
+    if (this.soilLoad > 0) this.carrySoil(world);
 
     if (this.state === AntState.SEARCHING) {
       this.search(world);
@@ -111,7 +129,9 @@ export class Ant {
 
     if (world.cells[i] === this.nestCell) {
       this.restAtNest(world);
-      this.excavateBelow();
+      // Going below ends the ant's turn: it must not also take a step up here,
+      // or it surfaces its own body into solid earth away from the doorway.
+      if (this.excavateBelow(world)) return;
     }
 
     if (world.cells[i] === Cell.FOOD && world.foodAmount[i] > 0.05) {
@@ -251,21 +271,231 @@ export class Ant {
     this.moveTo(last.nx, last.ny, last.idx);
   }
 
+  // ---------- below ground ----------
+
   /**
-   * Standing on the mound, dig a little further down and surface with a pellet.
+   * A shift underground: cut passage, then carry the spoil back up.
+   *
+   * There is no pathfinding down here either. The way out is simply "toward
+   * shallower depth" — the per-cell depth the diggers wrote on their way in is
+   * the only map an ant needs to find the door again.
+   */
+  private workBelow(world: World): void {
+    this.shiftTicks++;
+    const cfg = SimConfig.underground;
+    const i = world.idx(this.x, this.y);
+
+    // Lost down there: dig straight up and take the chances above. Better a
+    // confused ant on the surface than one the player never sees again. The
+    // solid-cell case is a broken world, not a normal one — the player erased
+    // the nest out from under a working ant, or a save came back odd.
+    if (world.underground[i] === Under.SOLID || this.shiftTicks >= cfg.abandonTicks) {
+      world.carve(i, Under.ENTRANCE, 0, this.kind === AntKind.FIRE ? 2 : 1);
+      this.surface();
+      return;
+    }
+
+    if (world.underground[i] === Under.ENTRANCE) {
+      // At the door. Ants come up with a full load, or when the shift is over.
+      if (this.soilLoad >= cfg.loadCapacity || this.shiftTicks >= cfg.shiftTicks) {
+        this.surface();
+        return;
+      }
+    }
+
+    // Loaded, or out of shift: head for shallower ground. Otherwise, keep working.
+    if (this.soilLoad >= cfg.loadCapacity || this.shiftTicks >= cfg.shiftTicks) {
+      this.moveThroughTunnels(world, true);
+      return;
+    }
+
+    // Nobody quarries their own front door. An ant walks in past the entrance
+    // works before it starts cutting — either as deep as the working face, or
+    // far enough in that widening the place is worth doing. That is what makes
+    // a shift a journey rather than a scratch at the doorstep, and what puts
+    // ants in the tunnels for the player to watch.
+    const here = world.tunnelDepth[i];
+    let deeper = false;
+    let works = false;
+    for (let d = 0; d < 8; d++) {
+      const nx = this.x + DIRS[d].dx;
+      const ny = this.y + DIRS[d].dy;
+      if (!world.isPassage(nx, ny)) continue;
+      const ni = world.idx(nx, ny);
+      if (world.tunnelDepth[ni] > here) deeper = true;
+      if (world.underground[ni] !== Under.ENTRANCE) works = true;
+    }
+
+    const canDig =
+      world.underground[i] === Under.ENTRANCE
+        ? // A doorway is only cut from when there is nothing to walk into yet.
+          // That is how a colony's first shafts get started, and once they ring
+          // the mound the door is a door again.
+          !works
+        : !deeper || here >= cfg.workDepth;
+
+    const digChance =
+      this.kind === AntKind.FIRE ? cfg.fireDigChance : cfg.harvesterDigChance;
+    if (canDig && this.rng.chance(digChance) && this.digTunnel(world)) return;
+    this.moveThroughTunnels(world, false);
+  }
+
+  /** Drop into the nest through the doorway the ant is standing on. */
+  private descend(): void {
+    this.layer = Layer.UNDERGROUND;
+    this.shiftTicks = 0;
+    // Out of reach of anything hunting on the surface.
+    this.prey = false;
+  }
+
+  private surface(): void {
+    this.layer = Layer.SURFACE;
+    this.shiftTicks = 0;
+    this.prey = true;
+  }
+
+  /**
+   * Cut one cell of new passage.
+   *
+   * Fire ants work outward from wherever they are in any direction, so the
+   * network grows as an irregular sponge. Depth wanders but trends downward.
+   * Returns false when there is nothing worth cutting from here.
+   */
+  private digTunnel(world: World): boolean {
+    const cfg = SimConfig.underground;
+    const here = world.idx(this.x, this.y);
+    const depthHere = world.tunnelDepth[here];
+
+    const start = this.rng.int(8);
+    for (let n = 0; n < 8; n++) {
+      const dirIdx = (start + n) % 8;
+      const d = DIRS[dirIdx];
+      const nx = this.x + d.dx;
+      const ny = this.y + d.dy;
+      if (!world.inBounds(nx, ny)) continue;
+      const ni = world.idx(nx, ny);
+      if (world.underground[ni] !== Under.SOLID) continue;
+      // A colony's works stay its colony's works, and stay near its own mound.
+      const spread = Math.max(Math.abs(nx - this.nestX), Math.abs(ny - this.nestY));
+      if (spread > cfg.maxSpread) continue;
+
+      const depth = Math.min(cfg.maxDepth, depthHere + cfg.descendStep);
+      world.carve(ni, Under.TUNNEL, depth, this.kind === AntKind.FIRE ? 2 : 1);
+      this.promoteChamber(world, ni);
+      this.energy -= cfg.digCost;
+      this.takeSoil();
+      this.x = nx;
+      this.y = ny;
+      this.dir = dirIdx;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * A freshly cut cell surrounded by passage is not a tunnel any more, it is a
+   * void — so it becomes a chamber. That is all fire-ant chambers are: the
+   * places where an irregular sponge happens to have eaten itself hollow.
+   */
+  private promoteChamber(world: World, i: number): void {
+    const cfg = SimConfig.underground;
+    const x = i % world.width;
+    const y = (i / world.width) | 0;
+    let open = 0;
+    for (let d = 0; d < 8; d++) {
+      if (world.isPassage(x + DIRS[d].dx, y + DIRS[d].dy)) open++;
+    }
+    if (open >= cfg.fireChamberNeighbours) {
+      world.underground[i] = Under.CHAMBER;
+    }
+  }
+
+  /**
+   * Step to a neighbouring passage cell.
+   *
+   * Going `up` is the ant's only way home, so it takes the strictly shallowest
+   * neighbour — every cell was cut from a shallower parent, so following that
+   * gradient always arrives at a doorway. Going down is deliberately looser: a
+   * weighted pick among the deeper neighbours, so the works branch instead of
+   * growing as one snake.
+   */
+  private moveThroughTunnels(world: World, up: boolean): void {
+    const depth = world.tunnelDepth;
+    const here = depth[world.idx(this.x, this.y)];
+
+    if (up) {
+      let best = -1;
+      let bestScore = -Infinity;
+      const start = this.rng.int(8);
+      for (let n = 0; n < 8; n++) {
+        const dirIdx = (start + n) % 8;
+        const d = DIRS[dirIdx];
+        if (!world.isPassage(this.x + d.dx, this.y + d.dy)) continue;
+        const dz = depth[world.idx(this.x + d.dx, this.y + d.dy)] - here;
+        const dirDiff = Math.min(Math.abs(dirIdx - this.dir), 8 - Math.abs(dirIdx - this.dir));
+        const score = -dz + (dirDiff <= 1 ? 0.5 : 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = dirIdx;
+        }
+      }
+      this.stepTunnel(best);
+      return;
+    }
+
+    const candidates: { idx: number; weight: number }[] = [];
+    let total = 0;
+    for (let dirIdx = 0; dirIdx < 8; dirIdx++) {
+      const d = DIRS[dirIdx];
+      if (!world.isPassage(this.x + d.dx, this.y + d.dy)) continue;
+      const dz = depth[world.idx(this.x + d.dx, this.y + d.dy)] - here;
+      const dirDiff = Math.min(Math.abs(dirIdx - this.dir), 8 - Math.abs(dirIdx - this.dir));
+      const forwardBias = dirDiff === 0 ? 3 : dirDiff === 1 ? 2 : dirDiff <= 2 ? 1 : 0.2;
+      const weight = (dz > 0 ? 3 + dz * 0.1 : 0.4) * forwardBias;
+      candidates.push({ idx: dirIdx, weight });
+      total += weight;
+    }
+    if (candidates.length === 0) {
+      this.dir = this.rng.int(8);
+      return;
+    }
+    let r = this.rng.next() * total;
+    for (const c of candidates) {
+      r -= c.weight;
+      if (r <= 0) {
+        this.stepTunnel(c.idx);
+        return;
+      }
+    }
+    this.stepTunnel(candidates[candidates.length - 1].idx);
+  }
+
+  private stepTunnel(dirIdx: number): void {
+    if (dirIdx < 0) {
+      this.dir = this.rng.int(8);
+      return;
+    }
+    this.x += DIRS[dirIdx].dx;
+    this.y += DIRS[dirIdx].dy;
+    this.dir = dirIdx;
+  }
+
+  /**
+   * Standing on the mound, take the doorway down and work a shift below.
    *
    * Surface digging alone cannot build a mound — the neighbourhood runs out of
-   * dirt. There is no bottom to the earth below the nest, so this is what keeps
-   * the pile growing as long as there are ants to work it.
+   * dirt. Every pellet that raises the ground comes from a cell of tunnel
+   * actually cut underneath it, which is why the mound and the nest grow together.
    */
-  private excavateBelow(): void {
-    if (this.carrying || this.soil) return;
-    const cfg = SimConfig.mound;
+  private excavateBelow(world: World): boolean {
+    if (this.carrying || this.soilLoad > 0) return false;
+    if (world.under(this.x, this.y) === Under.SOLID) return false;
+    const cfg = SimConfig.underground;
     const chance =
-      this.kind === AntKind.FIRE ? cfg.fireExcavateChance : cfg.harvesterExcavateChance;
-    if (!this.rng.chance(chance)) return;
-    this.energy -= SimConfig.ant.digEnergyCost;
-    this.takeSoil();
+      this.kind === AntKind.FIRE ? cfg.fireDescendChance : cfg.harvesterDescendChance;
+    if (!this.rng.chance(chance)) return false;
+    this.descend();
+    return true;
   }
 
   /**
@@ -273,8 +503,8 @@ export class Ant {
    * full of food has nowhere to put it, so those digs produce no pellet.
    */
   private takeSoil(): void {
-    if (this.carrying || this.soil) return;
-    this.soil = true;
+    if (this.carrying || this.soilLoad >= SimConfig.underground.loadCapacity) return;
+    this.soilLoad++;
     this.soilTicks = 0;
   }
 
@@ -300,28 +530,28 @@ export class Ant {
       // and just scatters the pellet, leaving a faint spoil bump where it dug.
       if (this.soilTicks < cfg.soilCarryTicks) return;
       const base = fire ? cfg.fireDeposit : cfg.harvesterDeposit;
-      world.dropSoil(this.x, this.y, base * cfg.spoilFraction);
-      this.soil = false;
+      world.dropSoil(this.x, this.y, base * cfg.spoilFraction * this.soilLoad);
+      this.soilLoad = 0;
       this.soilTicks = 0;
       return;
     }
 
     if (fire) {
       const falloff = 1 - dist / (cfg.fireMoundRadius + 1);
-      world.dropSoil(this.x, this.y, cfg.fireDeposit * falloff);
+      world.dropSoil(this.x, this.y, cfg.fireDeposit * falloff * this.soilLoad);
     } else {
       if (dist > 0.5) {
         const scale = cfg.harvesterDiskRadius / dist;
         const rx = Math.round(this.nestX + dx * scale);
         const ry = Math.round(this.nestY + dy * scale);
         if (world.heightAt(rx, ry) < cfg.harvesterRimMax) {
-          world.dropSoil(rx, ry, cfg.harvesterDeposit);
+          world.dropSoil(rx, ry, cfg.harvesterDeposit * this.soilLoad);
         }
       }
       const here = world.heightAt(this.x, this.y);
       if (here > 0) world.raiseHeight(this.x, this.y, -Math.min(here, cfg.harvesterClear));
     }
-    this.soil = false;
+    this.soilLoad = 0;
     this.soilTicks = 0;
   }
 
