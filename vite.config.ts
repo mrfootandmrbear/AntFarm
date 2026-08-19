@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: './',
+  base: '/AntFarm/',
   server: {
     port: Number(process.env.PORT) || 5173,
     host: true,
