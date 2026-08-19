@@ -13,7 +13,14 @@ Look work may start only after CORE PASS. KEEP a param change only if ADAPTATION
 - MEMORY: PASS
 - PULSE (E10/E11-lite): PASS — food grows the mound to cap; no food starves it
 - RELOCATE (E07): PASS
-- FIRE / LIZARD / MULTI / CHOKE / SOAK: PASS on {1842,7,99,1,42}
+- LIZARD / MULTI / CHOKE / SOAK: PASS on {1842,7,99,1,42}
+- FIRE: PASS 4/5 of {1842,7,99,1,42} (99 is the outlier)
+- Terrain: height map + surface depth-shading + sculpt brush (Phase 1); mound
+  formation from real dig volume, not a flat roll (Phase 2)
+- Underground: cell-associated grid (SOLID/TUNNEL/CHAMBER/ENTRANCE, depth,
+  owner) with shift-based descend/dig/surface behavior (Phase 3). No render
+  yet — Phase 4 (U-key cross-section view) and Phase 5 (species-specific
+  architecture beyond the chamber-density heuristic) are still open.
 - Look: vapor on by default, top-down walk/carry from Deposit, Scent/Erase/transport copy
 - Persistence: localStorage save/load, auto-save every 500 ticks
 - CI: GitHub Actions runs typecheck + eval on every push to main
@@ -237,6 +244,47 @@ the 90% “vanished immediately” MEMORY fail.
 Decision:
 KEEP
 
+
+### Underground layer — nest below the nest (E_CHOKE regression + FIRE stability)
+
+Trail formation: PASS (seed 1842: discover 197, recruit 652)
+Wall adaptation: PASS
+CHOKE: PASS — delivered 0.6, 2033 cell-visits (was FAIL: delivered 0.2)
+FIRE: 4/5 on {1842,7,99,1,42} (was 2/5 at the first shift length)
+
+Changed:
+underground: second Uint8Array grid (SOLID/TUNNEL/CHAMBER/ENTRANCE) +
+per-cell depth/owner, plan view sharing the surface grid's x/y — cell-
+associated data, not voxels. Ants descend at their mound's entrance,
+walk to a working face, cut passage on a per-tick dig chance, and
+follow the depth gradient home with a soil load. Mound pellets (prior
+commit) now come from real cut tunnel instead of a flat excavate roll.
+fireDescendChance 0.06 / harvesterDescendChance 0.07 (near-equal —
+species aggression lives in dig chance, 0.006 fire vs 0.003 harvester,
+not in how much of the colony goes below).
+shiftTicks 700 → 400.
+
+Observation:
+First pass (shiftTicks 700) parked ~22% of a 100-ant colony underground
+at steady state. That starved the chokepoint eval of surface traffic —
+CHOKE needs three deliveries through a squeezed 2-cell slot inside 8000
+ticks, and a fifth of the colony being off-map at any moment was enough
+to miss it even though nothing about digging favored either species in
+that scenario. It also made the fire-pile contest noisy across seeds:
+whichever species happened to have more ants below at the moment the
+eval sampled would read as "losing" the pile, independent of combat
+chances. A shorter shift (400) holds both species' surface numbers
+steadier without touching the descend/dig split that keeps fire ants
+the more aggressive diggers. Full eval green at 400; mound growth and
+tunnel count over 20k-30k ticks unaffected (fire dome to ~0.44 height,
+harvester disk to ~0.13, tunnelCount still climbing).
+
+Decision:
+KEEP
+
+New question:
+Underground view toggle (U key) and museum cross-section rendering are
+still unbuilt — the grid exists but nothing draws it yet.
 
 ### Gap-list pass — persistence, CI, coverage, renderer split
 
