@@ -12,27 +12,35 @@ Look work may start only after CORE PASS. KEEP a param change only if ADAPTATION
 - ADAPTATION: PASS
 - MEMORY: PASS
 - PULSE (E10/E11-lite): PASS — food grows the mound to cap; no food starves it
+- RELOCATE (E07): PASS
+- FIRE / LIZARD / MULTI / CHOKE / SOAK: PASS on {1842,7,99,1,42}
 - Look: vapor on by default, top-down walk/carry from Deposit, Scent/Erase/transport copy
+- Persistence: localStorage save/load, auto-save every 500 ticks
+- CI: GitHub Actions runs typecheck + eval on every push to main
 - Consecutive regressions: 0
-- Typecheck: clean (unchanged this tick)
-- `npm run eval`: exit 0
+- Typecheck: clean
+- `npm run eval`: exit 0 (~39s; `--skip-soak` for a ~15s loop)
 
 GREEN
 single colony food gathering
 pheromone decay
 wall adaptation
 nest reserves → hatch / starve
+world survives a page reload
+multiple food sources (E12)
+chokepoint traffic (E13)
+100k-tick soak (E09)
+fire-ant rivalry, lizard predation (gated)
 
 YELLOW
 food relocation (E07) PASS on 1842 — old corridor still heavy
 default 40-ant scene grows slowly
-multiple food sources (E12)
-chokepoint traffic (E13)
+fire ants annihilate rather than displace — harvesters hit 0 by ~40k ticks
+  on a shared pile, and swarm defense never fires
 
 RED
-E09 100k-tick soak
-two-colony evals (E14–E15)
-predator evals (E16–E20) — lizards exist, ungated
+two-colony evals beyond E_FIRE (E14–E15)
+predator evals beyond E_LIZARD (E16–E20)
 
 ## Morning brief
 
@@ -40,7 +48,7 @@ Can simple local rules produce an ant colony that is interesting to disturb and 
 
 On seed 1842: yes. Wander ~220 ticks, recruit ~700, one delivery closes the loop without conveyor lock-in. A rock wall across the corridor sends traffic through a northern gap and foraging resumes. Unreinforced food scent fades (~83%) and searchers spread out.
 
-Leaving the world running now does something: a fed mound hatches up to the cap and stocks a granary; an empty mound starves. Play it with `npm run dev`. Scent is on.
+Leaving the world running now does something: a fed mound hatches up to the cap and stocks a granary; an empty mound starves. And leaving is safe — the world saves itself every 500 ticks and asks whether to continue it when you come back. Play it with `npm run dev`. Scent is on.
 
 ## Entries
 
@@ -229,6 +237,65 @@ the 90% “vanished immediately” MEMORY fail.
 Decision:
 KEEP
 
+
+### Gap-list pass — persistence, CI, coverage, renderer split
+
+Trail formation: PASS (seed 1842: discover 222, recruit 705, corridor 614.3)
+Wall adaptation: PASS (detour visits 2088)
+Old-trail decay: 82.9%
+
+Changed:
+No simulation parameters. Every number above is byte-identical to the
+23:55 entry — this pass was infrastructure and coverage, not tuning.
+
+1. Save/load. `src/save/Snapshot.ts` serializes the whole sim; typed
+   arrays go to base64 so Float32 pheromone values and the mulberry32
+   state round-trip exactly. `SaveStore.ts` holds the localStorage side.
+   Continue / New world on startup, auto-save every 500 ticks, Save
+   button and Cmd/Ctrl+S. ~360 KiB steady state at 200x150.
+   Determinism checked by saving at tick 1500, loading into an engine
+   with a different seed, and running 2500 more ticks: identical ant
+   positions, energies, field masses and RNG state. Eval untouched — it
+   starts fresh by design.
+2. CI. `.github/workflows/eval.yml` runs typecheck + eval on push to
+   main. Two real bugs fell out of a clean install: the lockfile carried
+   a versionless stub for @rollup/rollup-android-arm-eabi (a corrupted
+   local npm cache entry), and nothing declared @types/node — tsc had
+   been finding it in a parent directory's node_modules.
+3. E_FIRE and E_LIZARD. Both run a paired control (no fire colony, no
+   lizard) so a colony that merely starved cannot read as a raid or a
+   hunt. Verified they detect a break: with the kill chances zeroed and
+   the tongue cooldown made effectively infinite, both flip to FAIL.
+4. E_SOAK. 100k ticks, one colony, one pile. Asserts no extinction, no
+   breeding past the cap, the granary inside [0, starting food mass] on
+   every tick, and no non-finite pheromone cell.
+5. E_MULTI_FOOD and E_CHOKEPOINT — the two YELLOW items.
+6. PixiRenderer split into HarvesterRenderer / FireAntRenderer /
+   LizardRenderer (481 -> 341 lines), verified in the browser against
+   the old scales and tints.
+
+Observation:
+Two things a watching player would notice, neither of them fixed here.
+
+The soak needs a radius-12 pile to say anything. At radius 4 the colony
+peaks at the 120 cap around 20k ticks and is extinct by 60k with the pile
+long gone — correct behavior, but it makes the granary untestable, so
+E_SOAK fails if the pile empties.
+
+E_FIRE is an annihilation, not a displacement. Over 6k ticks on a shared
+pile the harvesters go to zero on all five seeds while the fire ants lose
+nobody; swarmDefenseCount 3 never fires because harvesters die before
+they can cluster. The scenario is scored at 2k ticks, where it is still a
+contest (11-21 of 60 harvesters alive, fire ants holding the pile). Worth
+a tuning pass: a raid the harvesters can sometimes survive is a better
+thing to watch than a wipe.
+
+Decision:
+KEEP
+
+New question:
+Can harvesters ever win a contested pile, or does bumpKillChance 0.22
+make the outcome a foregone conclusion the moment two colonies meet?
 
 ## Template
 
