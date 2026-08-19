@@ -35,6 +35,8 @@ export interface AntSnapshot {
   digCooldown: number;
   returnTicks: number;
   prey: boolean;
+  /** Cumulative turn for lost-ant recovery; absent in pre-abort-trip saves. */
+  cumulativeTurn?: number;
   /** This ant's own Rng state; absent in pre-per-ant-seeding saves. */
   rngState?: number;
 }
@@ -167,6 +169,7 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
       returnTicks: ant.returnTicks,
       prey: ant.prey,
       rngState: ant.rng.getState(),
+      cumulativeTurn: ant.cumulativeTurn,
     });
   }
 
@@ -265,6 +268,7 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
     ant.prey = a.prey ?? true;
     ant.alive = true;
     if (a.rngState !== undefined) ant.rng.setState(a.rngState);
+    ant.cumulativeTurn = a.cumulativeTurn ?? 0;
     return ant;
   });
 

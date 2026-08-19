@@ -32,6 +32,8 @@ export class Ant {
   returnTicks = 0;
   /** This ant's own Rng stream — independent of the world's, per AntGame's per-ant seeding. */
   rng: Rng;
+  /** Sum of turning (in eighth-turns) since the last pickup/delivery — a lost-ant signal. */
+  cumulativeTurn = 0;
 
   constructor(
     x: number,
@@ -101,6 +103,7 @@ export class Ant {
       this.carrying = true;
       this.state = AntState.RETURNING;
       this.returnTicks = 0;
+      this.cumulativeTurn = 0;
       this.energy = Math.min(this.energy + SimConfig.ant.foodEnergyGain, 1.0);
       this.dir = (this.dir + 4) % 8;
       return;
@@ -118,6 +121,7 @@ export class Ant {
       this.carrying = false;
       this.state = AntState.SEARCHING;
       this.returnTicks = 0;
+      this.cumulativeTurn = 0;
       this.energy = Math.min(this.energy + SimConfig.ant.nestEnergyGain, 1.0);
       if (this.kind === AntKind.FIRE) {
         world.fireNestFoodStore += 0.1;
@@ -134,6 +138,7 @@ export class Ant {
       this.carrying = false;
       this.state = AntState.SEARCHING;
       this.returnTicks = 0;
+      this.cumulativeTurn = 0;
       this.dir = (this.dir + 4) % 8;
       return;
     }
@@ -146,6 +151,16 @@ export class Ant {
     field: DiffusingField,
     isSearching: boolean,
   ): void {
+    // Lost-ant recovery: too much back-and-forth turning without a pickup/delivery
+    // to show for it means this ant is looping, not making progress. Snap it to a
+    // fresh random heading and give it a tick to settle before it resumes sensing.
+    if (this.cumulativeTurn >= SimConfig.ant.abortTurnThreshold) {
+      this.cumulativeTurn = 0;
+      this.dir = this.rng.int(8);
+      this.stuckTimer = 0;
+      return;
+    }
+
     const candidates: { idx: number; nx: number; ny: number; weight: number }[] = [];
 
     for (let dirIdx = 0; dirIdx < 8; dirIdx++) {
@@ -251,6 +266,10 @@ export class Ant {
   }
 
   private moveTo(nx: number, ny: number, dirIdx: number): void {
+    const turn = Math.min(Math.abs(dirIdx - this.dir), 8 - Math.abs(dirIdx - this.dir));
+    // Decayed sum: a mostly-straight forager's turning stays low; an ant that keeps
+    // reversing/oscillating in place outpaces the decay and trips the abort check.
+    this.cumulativeTurn = this.cumulativeTurn * 0.97 + turn;
     this.x = nx;
     this.y = ny;
     this.dir = dirIdx;

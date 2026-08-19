@@ -70,6 +70,12 @@ export const SimConfig = {
     nestSipEnergy: 5,
     /** Drop cargo and search again if the nest hasn't been found. */
     giveUpReturnTicks: 1800,
+    /**
+     * Lost-ant recovery: cumulative turning (in eighth-turns, reset on pickup/delivery)
+     * past this forces a fresh random heading — catches ants oscillating in place that
+     * stuckTimer's "no passable neighbor" check doesn't.
+     */
+    abortTurnThreshold: 70,
   },
   colony: {
     maxAnts: 120,
