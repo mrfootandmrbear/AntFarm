@@ -1,38 +1,23 @@
 import {
   Application,
-  Assets,
   BufferImageSource,
   Container,
   Graphics,
   Sprite,
   Texture,
 } from 'pixi.js';
-import { AntKind, Cell, DIR_ANGLES } from '../sim/constants';
+import { Cell } from '../sim/constants';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { World } from '../sim/World';
-
-const assetUrls = import.meta.glob('../../assets/*.png', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-}) as Record<string, string>;
-
-function assetUrl(name: string): string | undefined {
-  const hit = Object.entries(assetUrls).find(([k]) => k.endsWith(`/${name}`));
-  return hit?.[1];
-}
-
-function sortedUrls(prefix: string): string[] {
-  return Object.entries(assetUrls)
-    .filter(([k]) => k.includes(`/${prefix}`) && k.endsWith('.png'))
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, url]) => url);
-}
+import { FireAntRenderer } from './FireAntRenderer';
+import { HarvesterRenderer } from './HarvesterRenderer';
+import { LizardRenderer } from './LizardRenderer';
+import { assetUrl, loadTexture } from './textures';
 
 /**
  * Draws the simulation with PixiJS. The world grid becomes a GPU texture fed
- * directly from a typed-array pixel buffer; ants are pooled sprites from the
- * Deposit sheets. The renderer only reads simulation state.
+ * directly from a typed-array pixel buffer; the creatures are delegated to one
+ * renderer per species. The renderer only reads simulation state.
  */
 export class PixiRenderer {
   app!: Application;
@@ -51,17 +36,10 @@ export class PixiRenderer {
   private vaporSprite!: Sprite;
 
   private sceneryContainer!: Container;
-  private antContainer!: Container;
-  private lizardContainer!: Container;
-  private fallbackAnt!: Texture;
-  private walkTextures: Texture[] = [];
-  private carryTextures: Texture[] = [];
-  private fireWalkTextures: Texture[] = [];
-  private fireCarryTextures: Texture[] = [];
-  private lizardWalkTextures: Texture[] = [];
-  private lizardTongueTex: Texture | null = null;
-  private antPool: Sprite[] = [];
-  private lizardPool: Sprite[] = [];
+  private readonly harvesters = new HarvesterRenderer();
+  private readonly fireAnts = new FireAntRenderer();
+  private readonly lizards = new LizardRenderer();
+  private fallbackCreature!: Texture;
 
   private cellNoise!: Int8Array;
   private foodSpriteTex: Texture | null = null;
@@ -117,32 +95,19 @@ export class PixiRenderer {
     this.sceneryContainer = new Container();
     this.app.stage.addChild(this.sceneryContainer);
 
-    this.fallbackAnt = this.makeAntTexture();
-    this.walkTextures = await this.loadTextures(sortedUrls('ant-walk-'));
-    this.carryTextures = await this.loadTextures(sortedUrls('ant-carry-'));
-    this.fireWalkTextures = await this.loadTextures(sortedUrls('fire-ant-walk-'));
-    this.fireCarryTextures = await this.loadTextures(sortedUrls('fire-ant-carry-'));
-    this.lizardWalkTextures = await this.loadTextures(sortedUrls('lizard-walk-'));
-    const tongueUrl = assetUrl('lizard-tongue.png');
-    if (tongueUrl) {
-      const loaded = await this.loadTextures([tongueUrl]);
-      this.lizardTongueTex = loaded[0] ?? null;
-    }
-    if (this.walkTextures.length === 0) this.walkTextures = [this.fallbackAnt];
-    if (this.carryTextures.length === 0) this.carryTextures = this.walkTextures;
-    if (this.fireWalkTextures.length === 0) this.fireWalkTextures = this.walkTextures;
-    if (this.fireCarryTextures.length === 0) this.fireCarryTextures = this.fireWalkTextures;
-    if (this.lizardWalkTextures.length === 0) this.lizardWalkTextures = [this.fallbackAnt];
+    // Every creature renderer shares one drawn shape for when its art is missing.
+    this.fallbackCreature = this.makeCreatureTexture();
+    await this.harvesters.init(this.fallbackCreature);
+    await this.fireAnts.init(this.fallbackCreature);
+    await this.lizards.init(this.fallbackCreature);
+    this.app.stage.addChild(this.harvesters.container);
+    this.app.stage.addChild(this.fireAnts.container);
+    this.app.stage.addChild(this.lizards.container);
 
-    this.antContainer = new Container();
-    this.app.stage.addChild(this.antContainer);
-    this.lizardContainer = new Container();
-    this.app.stage.addChild(this.lizardContainer);
-
-    this.foodSpriteTex = await this.loadTexture(assetUrl('food.png'));
-    this.nestSpriteTex = await this.loadTexture(assetUrl('nest.png'));
-    this.fireNestSpriteTex = await this.loadTexture(assetUrl('fire-nest.png'));
-    this.rockSpriteTex = await this.loadTexture(assetUrl('rock.png'));
+    this.foodSpriteTex = await loadTexture(assetUrl('food.png'));
+    this.nestSpriteTex = await loadTexture(assetUrl('nest.png'));
+    this.fireNestSpriteTex = await loadTexture(assetUrl('fire-nest.png'));
+    this.rockSpriteTex = await loadTexture(assetUrl('rock.png'));
 
     this.cellNoise = new Int8Array(w * h);
     for (let i = 0; i < this.cellNoise.length; i++) {
@@ -150,29 +115,7 @@ export class PixiRenderer {
     }
   }
 
-  private async loadTexture(url: string | undefined): Promise<Texture | null> {
-    if (!url) return null;
-    try {
-      return (await Assets.load(url)) as Texture;
-    } catch {
-      return null;
-    }
-  }
-
-  private async loadTextures(urls: string[]): Promise<Texture[]> {
-    const out: Texture[] = [];
-    for (const url of urls) {
-      try {
-        const tex = (await Assets.load(url)) as Texture;
-        out.push(tex);
-      } catch {
-        // leave fallback
-      }
-    }
-    return out;
-  }
-
-  private makeAntTexture(): Texture {
+  private makeCreatureTexture(): Texture {
     const rx = Math.max(1.5, this.cellSize * 0.7);
     const ry = Math.max(1, this.cellSize * 0.45);
     const g = new Graphics();
@@ -184,11 +127,13 @@ export class PixiRenderer {
   }
 
   render(engine: SimulationEngine): void {
+    const tick = engine.world.tickCount;
     this.updateTerrain();
     this.updateVapor();
     this.updateScenery();
-    this.updateAnts(engine);
-    this.updateLizards(engine);
+    this.harvesters.update(engine.ants, tick, this.cellSize);
+    this.fireAnts.update(engine.ants, tick, this.cellSize);
+    this.lizards.update(engine.lizards, tick, this.cellSize);
   }
 
   invalidateScenery(): void {
@@ -391,91 +336,6 @@ export class PixiRenderer {
           this.sceneryContainer.addChild(sprite);
         }
       }
-    }
-  }
-
-  private updateAnts(engine: SimulationEngine): void {
-    const cs = this.cellSize;
-    const half = cs / 2;
-    const tick = engine.world.tickCount;
-    let s = 0;
-
-    for (const ant of engine.ants) {
-      if (!ant.alive) continue;
-      const isFire = ant.kind === AntKind.FIRE;
-      const walk = isFire ? this.fireWalkTextures : this.walkTextures;
-      const carry = isFire ? this.fireCarryTextures : this.carryTextures;
-      const walkN = walk.length;
-      const carryN = carry.length;
-      const usingFallback = walk[0] === this.fallbackAnt;
-      const scale = usingFallback ? 1 : isFire ? (cs * 3.0) / 70 : (cs * 3.25) / 110;
-      let sprite = this.antPool[s];
-      if (!sprite) {
-        sprite = new Sprite(walk[0]);
-        sprite.anchor.set(0.5);
-        this.antContainer.addChild(sprite);
-        this.antPool[s] = sprite;
-      }
-      sprite.visible = true;
-      sprite.x = ant.x * cs + half;
-      sprite.y = ant.y * cs + half;
-      if (usingFallback) {
-        sprite.rotation = DIR_ANGLES[ant.dir];
-        sprite.scale.set(1);
-        sprite.tint = ant.carrying ? 0xdca028 : isFire ? 0x2a1814 : 0x1e140f;
-      } else {
-        sprite.rotation = DIR_ANGLES[ant.dir] + Math.PI / 2;
-        sprite.scale.set(scale);
-        sprite.tint = isFire ? 0xb8b0b0 : 0xffffff;
-        const frame = (tick + ant.x * 3 + ant.y) % (ant.carrying ? carryN : walkN);
-        sprite.texture = ant.carrying ? carry[frame] : walk[frame];
-      }
-      s++;
-    }
-
-    for (let i = s; i < this.antPool.length; i++) {
-      if (this.antPool[i].visible) this.antPool[i].visible = false;
-    }
-  }
-
-  private updateLizards(engine: SimulationEngine): void {
-    const cs = this.cellSize;
-    const half = cs / 2;
-    const tick = engine.world.tickCount;
-    const walk = this.lizardWalkTextures;
-    const walkN = walk.length;
-    const tongue = this.lizardTongueTex;
-    const usingFallback = walk[0] === this.fallbackAnt;
-    const scale = usingFallback ? 2.4 : (cs * 6.2) / 130;
-    let s = 0;
-
-    for (const lizard of engine.lizards) {
-      if (!lizard.alive) continue;
-      let sprite = this.lizardPool[s];
-      if (!sprite) {
-        sprite = new Sprite(walk[0]);
-        sprite.anchor.set(0.5);
-        this.lizardContainer.addChild(sprite);
-        this.lizardPool[s] = sprite;
-      }
-      sprite.visible = true;
-      sprite.x = lizard.x * cs + half;
-      sprite.y = lizard.y * cs + half;
-      sprite.rotation = DIR_ANGLES[lizard.dir] + Math.PI / 2;
-      sprite.scale.set(scale);
-      if (lizard.swarmTicks > 0) sprite.tint = 0xffc8b0;
-      else sprite.tint = 0xffffff;
-      if (lizard.eatingTicks > 0 && tongue) {
-        sprite.texture = tongue;
-      } else {
-        const frame = (tick + lizard.x * 2 + lizard.y) % walkN;
-        sprite.texture = walk[frame];
-      }
-      s++;
-    }
-
-    for (let i = s; i < this.lizardPool.length; i++) {
-      if (this.lizardPool[i].visible) this.lizardPool[i].visible = false;
     }
   }
 }
