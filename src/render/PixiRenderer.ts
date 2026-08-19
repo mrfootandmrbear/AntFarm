@@ -7,7 +7,7 @@ import {
   Sprite,
   Texture,
 } from 'pixi.js';
-import { Cell, DIR_ANGLES } from '../sim/constants';
+import { AntKind, Cell, DIR_ANGLES } from '../sim/constants';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { World } from '../sim/World';
 
@@ -57,14 +57,21 @@ export class PixiRenderer {
   private vaporSprite!: Sprite;
 
   private antContainer!: Container;
+  private lizardContainer!: Container;
   private fallbackAnt!: Texture;
   private walkTextures: Texture[] = [];
   private carryTextures: Texture[] = [];
+  private fireWalkTextures: Texture[] = [];
+  private fireCarryTextures: Texture[] = [];
+  private lizardWalkTextures: Texture[] = [];
+  private lizardTongueTex: Texture | null = null;
   private antPool: Sprite[] = [];
+  private lizardPool: Sprite[] = [];
 
   private cellNoise!: Int8Array;
   private foodTex: TexSamp | null = null;
   private nestTex: TexSamp | null = null;
+  private fireNestTex: TexSamp | null = null;
   private rockTex: TexSamp | null = null;
 
   async init(parent: HTMLElement, world: World, cellSize = 4): Promise<void> {
@@ -113,14 +120,28 @@ export class PixiRenderer {
     this.fallbackAnt = this.makeAntTexture();
     this.walkTextures = await this.loadTextures(sortedUrls('ant-walk-'));
     this.carryTextures = await this.loadTextures(sortedUrls('ant-carry-'));
+    this.fireWalkTextures = await this.loadTextures(sortedUrls('fire-ant-walk-'));
+    this.fireCarryTextures = await this.loadTextures(sortedUrls('fire-ant-carry-'));
+    this.lizardWalkTextures = await this.loadTextures(sortedUrls('lizard-walk-'));
+    const tongueUrl = assetUrl('lizard-tongue.png');
+    if (tongueUrl) {
+      const loaded = await this.loadTextures([tongueUrl]);
+      this.lizardTongueTex = loaded[0] ?? null;
+    }
     if (this.walkTextures.length === 0) this.walkTextures = [this.fallbackAnt];
     if (this.carryTextures.length === 0) this.carryTextures = this.walkTextures;
+    if (this.fireWalkTextures.length === 0) this.fireWalkTextures = this.walkTextures;
+    if (this.fireCarryTextures.length === 0) this.fireCarryTextures = this.fireWalkTextures;
+    if (this.lizardWalkTextures.length === 0) this.lizardWalkTextures = [this.fallbackAnt];
 
     this.antContainer = new Container();
     this.app.stage.addChild(this.antContainer);
+    this.lizardContainer = new Container();
+    this.app.stage.addChild(this.lizardContainer);
 
     this.foodTex = await this.loadSamp(assetUrl('food.png'));
     this.nestTex = await this.loadSamp(assetUrl('nest.png'));
+    this.fireNestTex = await this.loadSamp(assetUrl('fire-nest.png'));
     this.rockTex = await this.loadSamp(assetUrl('rock.png'));
 
     this.cellNoise = new Int8Array(w * h);
@@ -176,6 +197,7 @@ export class PixiRenderer {
     this.updateTerrain();
     this.updateVapor();
     this.updateAnts(engine);
+    this.updateLizards(engine);
   }
 
   private sample(tex: TexSamp, x: number, y: number): [number, number, number, number] {
@@ -258,6 +280,20 @@ export class PixiRenderer {
             }
             break;
           }
+          case Cell.FIRE_NEST: {
+            const pulse = Math.sin(tick * 0.03) * 8;
+            const samp = this.fireNestTex ? this.sample(this.fireNestTex, x, y) : null;
+            if (samp && samp[3] > 40) {
+              r = samp[0] * 0.85 + pulse * 0.3;
+              g = samp[1] * 0.7;
+              b = samp[2] * 0.55;
+            } else {
+              r = 90 + pulse + noise;
+              g = 40 + pulse * 0.2;
+              b = 28;
+            }
+            break;
+          }
           default:
             r = 0;
             g = 0;
@@ -290,6 +326,8 @@ export class PixiRenderer {
 
     const food = world.foodField.current;
     const home = world.homeField.current;
+    const fireFood = world.fireFoodField.current;
+    const fireHome = world.fireHomeField.current;
     const blocked = world.blocked;
 
     for (let i = 0; i < w * h; i++) {
@@ -301,10 +339,12 @@ export class PixiRenderer {
         buf[p + 3] = 0;
         continue;
       }
-      // Combined scent: returning trail is warmer/denser; home trail is cooler mist.
+      // Combined scent: harvester trails are warm/cool mist; fire-ant trails are redder haze.
       const fv = food[i];
       const hv = home[i];
-      const dens = Math.min(fv / 5 + hv / 8, 1);
+      const ff = fireFood[i];
+      const fh = fireHome[i];
+      const dens = Math.min(fv / 5 + hv / 8 + ff / 5 + fh / 8, 1);
       if (dens < 0.02) {
         buf[p] = 0;
         buf[p + 1] = 0;
@@ -312,10 +352,20 @@ export class PixiRenderer {
         buf[p + 3] = 0;
         continue;
       }
-      const t = fv / (fv + hv + 0.0001);
-      buf[p] = 210 - t * 40;
-      buf[p + 1] = 170 + t * 50;
-      buf[p + 2] = 110 + (1 - t) * 80;
+      const harvest = fv + hv;
+      const fire = ff + fh;
+      const t = fv / (harvest + 0.0001);
+      let r = 210 - t * 40;
+      let g = 170 + t * 50;
+      let b = 110 + (1 - t) * 80;
+      if (fire > harvest * 0.35) {
+        r = 210 + Math.min(fire * 8, 40);
+        g = 90 + t * 30;
+        b = 50;
+      }
+      buf[p] = r;
+      buf[p + 1] = g;
+      buf[p + 2] = b;
       buf[p + 3] = Math.min(dens * 150, 140);
     }
 
@@ -326,17 +376,20 @@ export class PixiRenderer {
     const cs = this.cellSize;
     const half = cs / 2;
     const tick = engine.world.tickCount;
-    const walkN = this.walkTextures.length;
-    const carryN = this.carryTextures.length;
-    const usingFallback = this.walkTextures[0] === this.fallbackAnt;
-    const scale = usingFallback ? 1 : (cs * 2.8) / 110;
     let s = 0;
 
     for (const ant of engine.ants) {
       if (!ant.alive) continue;
+      const isFire = ant.kind === AntKind.FIRE;
+      const walk = isFire ? this.fireWalkTextures : this.walkTextures;
+      const carry = isFire ? this.fireCarryTextures : this.carryTextures;
+      const walkN = walk.length;
+      const carryN = carry.length;
+      const usingFallback = walk[0] === this.fallbackAnt;
+      const scale = usingFallback ? 1 : isFire ? (cs * 2.5) / 70 : (cs * 2.8) / 110;
       let sprite = this.antPool[s];
       if (!sprite) {
-        sprite = new Sprite(this.walkTextures[0]);
+        sprite = new Sprite(walk[0]);
         sprite.anchor.set(0.5);
         this.antContainer.addChild(sprite);
         this.antPool[s] = sprite;
@@ -347,22 +400,60 @@ export class PixiRenderer {
       if (usingFallback) {
         sprite.rotation = DIR_ANGLES[ant.dir];
         sprite.scale.set(1);
-        sprite.tint = ant.carrying ? 0xdca028 : 0x1e140f;
+        sprite.tint = ant.carrying ? 0xdca028 : isFire ? 0x2a1814 : 0x1e140f;
       } else {
-        // Sheets are head-up; dir 0 is up.
         sprite.rotation = DIR_ANGLES[ant.dir] + Math.PI / 2;
         sprite.scale.set(scale);
-        sprite.tint = 0xffffff;
+        sprite.tint = isFire ? 0xb8b0b0 : 0xffffff;
         const frame = (tick + ant.x * 3 + ant.y) % (ant.carrying ? carryN : walkN);
-        sprite.texture = ant.carrying
-          ? this.carryTextures[frame]
-          : this.walkTextures[frame];
+        sprite.texture = ant.carrying ? carry[frame] : walk[frame];
       }
       s++;
     }
 
     for (let i = s; i < this.antPool.length; i++) {
       if (this.antPool[i].visible) this.antPool[i].visible = false;
+    }
+  }
+
+  private updateLizards(engine: SimulationEngine): void {
+    const cs = this.cellSize;
+    const half = cs / 2;
+    const tick = engine.world.tickCount;
+    const walk = this.lizardWalkTextures;
+    const walkN = walk.length;
+    const tongue = this.lizardTongueTex;
+    const usingFallback = walk[0] === this.fallbackAnt;
+    const scale = usingFallback ? 2.4 : (cs * 6.2) / 130;
+    let s = 0;
+
+    for (const lizard of engine.lizards) {
+      if (!lizard.alive) continue;
+      let sprite = this.lizardPool[s];
+      if (!sprite) {
+        sprite = new Sprite(walk[0]);
+        sprite.anchor.set(0.5);
+        this.lizardContainer.addChild(sprite);
+        this.lizardPool[s] = sprite;
+      }
+      sprite.visible = true;
+      sprite.x = lizard.x * cs + half;
+      sprite.y = lizard.y * cs + half;
+      sprite.rotation = DIR_ANGLES[lizard.dir] + Math.PI / 2;
+      sprite.scale.set(scale);
+      if (lizard.swarmTicks > 0) sprite.tint = 0xffc8b0;
+      else sprite.tint = 0xffffff;
+      if (lizard.eatingTicks > 0 && tongue) {
+        sprite.texture = tongue;
+      } else {
+        const frame = (tick + lizard.x * 2 + lizard.y) % walkN;
+        sprite.texture = walk[frame];
+      }
+      s++;
+    }
+
+    for (let i = s; i < this.lizardPool.length; i++) {
+      if (this.lizardPool[i].visible) this.lizardPool[i].visible = false;
     }
   }
 }

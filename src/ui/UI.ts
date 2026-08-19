@@ -2,7 +2,7 @@ import { Cell, CellType } from '../sim/constants';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { PixiRenderer } from '../render/PixiRenderer';
 
-type ToolKind = 'cell' | 'ant';
+type ToolKind = 'cell' | 'ant' | 'fireant' | 'lizard';
 
 interface Tool {
   id: string;
@@ -20,7 +20,10 @@ const TOOLS: Tool[] = [
   { id: 'water', label: 'Water', color: '#2864aa', key: '2', category: 'Water', kind: 'cell', cell: Cell.WATER },
   { id: 'food', label: 'Food', color: '#2ecc71', key: '3', category: 'Plants & Food', kind: 'cell', cell: Cell.FOOD },
   { id: 'nest', label: 'Nest', color: '#8c4630', key: '4', category: 'Structures', kind: 'cell', cell: Cell.NEST },
-  { id: 'ant', label: 'Ant', color: '#1e140f', key: '5', category: 'Bugs', kind: 'ant' },
+  { id: 'firenest', label: 'Fire nest', color: '#5a2418', key: '5', category: 'Structures', kind: 'cell', cell: Cell.FIRE_NEST },
+  { id: 'ant', label: 'Ant', color: '#c45a28', key: '6', category: 'Bugs', kind: 'ant' },
+  { id: 'fireant', label: 'Fire ant', color: '#1a1210', key: '7', category: 'Bugs', kind: 'fireant' },
+  { id: 'lizard', label: 'Lizard', color: '#b08958', key: '8', category: 'Bugs', kind: 'lizard' },
 ];
 
 const CATEGORY_ORDER = ['Terrain', 'Water', 'Plants & Food', 'Structures', 'Bugs'];
@@ -157,7 +160,7 @@ export class UI {
   private buildReadout(): void {
     this.readoutEl = document.getElementById('readout')!;
     this.readoutEl.innerHTML = '';
-    for (const label of ['Ants', 'Carrying', 'Food', 'Tick']) {
+    for (const label of ['Ants', 'Lizards', 'Food', 'Tick']) {
       const stat = el('div', 'stat');
       stat.appendChild(el('span', 'stat-label', label));
       const value = el('span', 'stat-value', '0');
@@ -249,8 +252,13 @@ export class UI {
   }
 
   private paint(gx: number, gy: number): void {
-    const r = this.brushSize;
     const world = this.engine.world;
+    if (this.selected.kind === 'lizard') {
+      this.engine.spawnLizardAt(gx, gy);
+      return;
+    }
+
+    const r = this.brushSize;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > r * r) continue;
@@ -258,7 +266,9 @@ export class UI {
         const y = gy + dy;
         if (!world.inBounds(x, y)) continue;
 
-        if (this.selected.kind === 'ant') {
+        if (this.selected.kind === 'fireant') {
+          this.engine.spawnFireAntAt(x, y);
+        } else if (this.selected.kind === 'ant') {
           this.engine.spawnAntAt(x, y);
         } else {
           world.set(x, y, this.selected.cell!);
@@ -308,10 +318,10 @@ export class UI {
   // ---------- Stats ----------
   updateInfo(): void {
     const alive = this.engine.aliveCount();
-    const carrying = this.engine.carryingCount();
+    const lizards = this.engine.lizardCount();
     this.setStat('Ants', String(alive));
-    this.setStat('Carrying', String(carrying));
-    this.setStat('Food', this.engine.world.nestFoodStore.toFixed(1));
+    this.setStat('Lizards', String(lizards));
+    this.setStat('Food', (this.engine.world.nestFoodStore + this.engine.world.fireNestFoodStore).toFixed(1));
     this.setStat('Tick', String(this.engine.world.tickCount));
   }
 

@@ -6,6 +6,7 @@ export const Cell = {
   WATER: 3,
   FOOD: 4,
   NEST: 5,
+  FIRE_NEST: 6,
 } as const;
 
 export type CellType = (typeof Cell)[keyof typeof Cell];
@@ -17,7 +18,15 @@ export const CellNames: Record<number, string> = {
   [Cell.WATER]: 'Water',
   [Cell.FOOD]: 'Food',
   [Cell.NEST]: 'Nest',
+  [Cell.FIRE_NEST]: 'Fire nest',
 };
+
+/** Colony faction. Harvesters are the default Ant. */
+export const AntKind = {
+  HARVESTER: 0,
+  FIRE: 1,
+} as const;
+export type AntKindType = (typeof AntKind)[keyof typeof AntKind];
 
 /**
  * The 8 movement directions, indexed clockwise starting from "up".
@@ -58,10 +67,30 @@ export const SimConfig = {
     /** Drop cargo and search again if the nest hasn't been found. */
     giveUpReturnTicks: 1800,
   },
-  colony: {
+    colony: {
     maxAnts: 120,
     spawnIntervalTicks: 50,
     initialAnts: 40,
+  },
+  fireAnt: {
+    /** Same-cell bump: aggressive but not an instant wipe. */
+    bumpKillChance: 0.22,
+    /** Neighboring cell: slow displacement along shared trails. */
+    adjacentKillChance: 0.003,
+    /** Harvesters clustered on a fire ant can sting back. */
+    swarmDefenseCount: 3,
+    swarmDefenseChance: 0.012,
+  },
+  lizard: {
+    energyDrainPerTick: 0.00006,
+    moveEveryTicks: 3,
+    eatRadius: 2,
+    tongueCooldown: 55,
+    eatEnergyGain: 0.2,
+    sitScent: 0.28,
+    swarmCount: 5,
+    swarmDamage: 0.003,
+    maxLizards: 12,
   },
   world: {
     diffuseIntervalTicks: 2,

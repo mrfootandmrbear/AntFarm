@@ -1,6 +1,7 @@
 import { Ant } from './Ant';
-import { Cell, CellType } from './constants';
+import { AntKind, AntKindType, Cell, CellType } from './constants';
 import { SimConfig } from './constants';
+import { Lizard } from './Lizard';
 import { World } from './World';
 
 /**
@@ -10,6 +11,7 @@ import { World } from './World';
 export class SimulationEngine {
   readonly world: World;
   ants: Ant[] = [];
+  lizards: Lizard[] = [];
   allowSpawn = true;
   allowWater = true;
 
@@ -27,19 +29,61 @@ export class SimulationEngine {
     }
 
     for (const ant of this.ants) ant.update(world);
+    this.resolveRaids();
+    for (const lizard of this.lizards) lizard.update(world, this.ants);
 
     if (world.tickCount % cfg.cullIntervalTicks === 0) {
       this.ants = this.ants.filter((a) => a.alive);
+      this.lizards = this.lizards.filter((l) => l.alive);
     }
 
-    if (this.allowSpawn) this.spawnAnts();
+    if (this.allowSpawn) {
+      this.spawnAnts();
+      this.spawnFireAnts();
+    }
 
     if (world.tickCount % cfg.diffuseIntervalTicks === 0) {
       world.homeField.diffuse(world.blocked);
       world.foodField.diffuse(world.blocked);
+      world.fireHomeField.diffuse(world.blocked);
+      world.fireFoodField.diffuse(world.blocked);
     }
 
     world.tickCount++;
+  }
+
+  /**
+   * Fire ants locally displace harvesters they bump into. Skipped entirely
+   * when only one colony is present so eval RNG stays identical.
+   */
+  private resolveRaids(): void {
+    let fire = 0;
+    let harv = 0;
+    for (const a of this.ants) {
+      if (!a.alive) continue;
+      if (a.kind === AntKind.FIRE) fire++;
+      else harv++;
+    }
+    if (fire === 0 || harv === 0) return;
+
+    const rng = this.world.rng;
+    const bump = SimConfig.fireAnt.bumpKillChance;
+    const adj = SimConfig.fireAnt.adjacentKillChance;
+    const swarmN = SimConfig.fireAnt.swarmDefenseCount;
+    const swarmP = SimConfig.fireAnt.swarmDefenseChance;
+
+    for (const f of this.ants) {
+      if (!f.alive || f.kind !== AntKind.FIRE) continue;
+      let nearbyHarvesters = 0;
+      for (const h of this.ants) {
+        if (!h.alive || h.kind !== AntKind.HARVESTER) continue;
+        const d = Math.max(Math.abs(h.x - f.x), Math.abs(h.y - f.y));
+        if (d > 1) continue;
+        nearbyHarvesters++;
+        if (rng.chance(d === 0 ? bump : adj)) h.alive = false;
+      }
+      if (nearbyHarvesters >= swarmN && rng.chance(swarmP)) f.alive = false;
+    }
   }
 
   /** Colony growth: periodically hatch a new ant at the nest if there's food. */
@@ -68,11 +112,49 @@ export class SimulationEngine {
     }
   }
 
-  /** Spawn a single ant at (x, y), homed to the nearest nest. Returns success. */
-  spawnAntAt(x: number, y: number): boolean {
-    const nest = this.world.findNearestNest(x, y);
-    if (!nest || !this.world.isPassable(x, y)) return false;
-    this.ants.push(new Ant(x, y, nest.x, nest.y, this.world.rng));
+  private spawnFireAnts(): void {
+    const world = this.world;
+    const cfg = SimConfig.colony;
+    if (world.tickCount % cfg.spawnIntervalTicks !== 0) return;
+
+    const alive = this.aliveCount();
+    if (alive >= cfg.maxAnts) return;
+    if (world.fireNestFoodStore < 0.3 && this.fireAliveCount() > 8) return;
+
+    const nest = world.findFireNestCell();
+    if (!nest) return;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const nx = nest.x + dx;
+        const ny = nest.y + dy;
+        if (world.inBounds(nx, ny) && world.isPassable(nx, ny)) {
+          this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.rng, AntKind.FIRE));
+          if (world.fireNestFoodStore > 0.2) world.fireNestFoodStore -= 0.2;
+          return;
+        }
+      }
+    }
+  }
+
+  /** Spawn a single ant at (x, y), homed to the nearest matching nest. */
+  spawnAntAt(x: number, y: number, kind: AntKindType = AntKind.HARVESTER): boolean {
+    const nestType = kind === AntKind.FIRE ? Cell.FIRE_NEST : Cell.NEST;
+    const nest = this.world.findNearestCell(x, y, nestType);
+    if (!this.world.isPassable(x, y)) return false;
+    const home = nest ?? { x, y };
+    this.ants.push(new Ant(x, y, home.x, home.y, this.world.rng, kind));
+    return true;
+  }
+
+  spawnFireAntAt(x: number, y: number): boolean {
+    return this.spawnAntAt(x, y, AntKind.FIRE);
+  }
+
+  spawnLizardAt(x: number, y: number): boolean {
+    if (!this.world.isPassable(x, y)) return false;
+    if (this.lizardCount() >= SimConfig.lizard.maxLizards) return false;
+    this.lizards.push(new Lizard(x, y, this.world.rng.int(8)));
     return true;
   }
 
@@ -123,6 +205,18 @@ export class SimulationEngine {
     return n;
   }
 
+  fireAliveCount(): number {
+    let n = 0;
+    for (const a of this.ants) if (a.alive && a.kind === AntKind.FIRE) n++;
+    return n;
+  }
+
+  lizardCount(): number {
+    let n = 0;
+    for (const l of this.lizards) if (l.alive) n++;
+    return n;
+  }
+
   carryingCount(): number {
     let n = 0;
     for (const a of this.ants) if (a.alive && a.carrying) n++;
@@ -145,6 +239,7 @@ export class SimulationEngine {
   clear(): void {
     this.world.clear();
     this.ants = [];
+    this.lizards = [];
   }
 
   /** Clear, then lay down the default starting scene. */

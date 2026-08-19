@@ -20,11 +20,16 @@ export class World {
   readonly homeField: DiffusingField;
   /** Trail back toward food (laid by returning ants). */
   readonly foodField: DiffusingField;
+  /** Fire-ant home trail (searching fire ants). */
+  readonly fireHomeField: DiffusingField;
+  /** Fire-ant food trail (returning fire ants). */
+  readonly fireFoodField: DiffusingField;
 
   /** Diffusion mask: 1 where a cell blocks pheromone flow (walls, water). */
   readonly blocked: Uint8Array;
 
   nestFoodStore = 0;
+  fireNestFoodStore = 0;
   tickCount = 0;
   readonly rng: Rng;
   /** Starting food mass, set by eval/scenes so delivery % is meaningful. */
@@ -50,6 +55,8 @@ export class World {
     };
     this.homeField = new DiffusingField(width, height, opts);
     this.foodField = new DiffusingField(width, height, opts);
+    this.fireHomeField = new DiffusingField(width, height, opts);
+    this.fireFoodField = new DiffusingField(width, height, opts);
   }
 
   clear(): void {
@@ -58,7 +65,10 @@ export class World {
     this.blocked.fill(0);
     this.homeField.clear();
     this.foodField.clear();
+    this.fireHomeField.clear();
+    this.fireFoodField.clear();
     this.nestFoodStore = 0;
+    this.fireNestFoodStore = 0;
     this.tickCount = 0;
     this.initialFoodMass = 0;
   }
@@ -114,7 +124,13 @@ export class World {
   isPassable(x: number, y: number): boolean {
     if (!this.inBounds(x, y)) return false;
     const c = this.cells[this.idx(x, y)];
-    return c === Cell.DIRT || c === Cell.EMPTY || c === Cell.FOOD || c === Cell.NEST;
+    return (
+      c === Cell.DIRT ||
+      c === Cell.EMPTY ||
+      c === Cell.FOOD ||
+      c === Cell.NEST ||
+      c === Cell.FIRE_NEST
+    );
   }
 
   isDiggable(x: number, y: number): boolean {
@@ -163,11 +179,24 @@ export class World {
 
   /** Nearest NEST cell to (x, y) by Manhattan distance, or null if none exist. */
   findNearestNest(x: number, y: number): { x: number; y: number } | null {
+    return this.findNearestCell(x, y, Cell.NEST);
+  }
+
+  findFireNestCell(): { x: number; y: number } | null {
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        if (this.cells[this.idx(x, y)] === Cell.FIRE_NEST) return { x, y };
+      }
+    }
+    return null;
+  }
+
+  findNearestCell(x: number, y: number, type: CellType): { x: number; y: number } | null {
     let best: { x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (let ny = 0; ny < this.height; ny++) {
       for (let nx = 0; nx < this.width; nx++) {
-        if (this.cells[this.idx(nx, ny)] === Cell.NEST) {
+        if (this.cells[this.idx(nx, ny)] === type) {
           const d = Math.abs(nx - x) + Math.abs(ny - y);
           if (d < bestDist) {
             bestDist = d;
@@ -177,6 +206,20 @@ export class World {
       }
     }
     return best;
+  }
+
+  /** True if a nest mound of either colony sits in the Chebyshev neighborhood. */
+  nestNearby(x: number, y: number, radius = 2): boolean {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!this.inBounds(nx, ny)) continue;
+        const c = this.cells[this.idx(nx, ny)];
+        if (c === Cell.NEST || c === Cell.FIRE_NEST) return true;
+      }
+    }
+    return false;
   }
 }
 

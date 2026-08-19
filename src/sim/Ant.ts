@@ -1,4 +1,4 @@
-import { Cell, DIRS, SimConfig } from './constants';
+import { AntKind, AntKindType, Cell, DIRS, SimConfig } from './constants';
 import type { DiffusingField } from './DiffusingField';
 import type { Rng } from './Rng';
 import type { World } from './World';
@@ -19,6 +19,9 @@ export class Ant {
   y: number;
   nestX: number;
   nestY: number;
+  kind: AntKindType;
+  /** Lizards eat ants; shared prey flag rather than a lizard×ant special case. */
+  prey = true;
   state: AntStateType = AntState.SEARCHING;
   carrying = false;
   dir: number;
@@ -28,12 +31,32 @@ export class Ant {
   digCooldown = 0;
   returnTicks = 0;
 
-  constructor(x: number, y: number, nestX: number, nestY: number, rng: Rng) {
+  constructor(
+    x: number,
+    y: number,
+    nestX: number,
+    nestY: number,
+    rng: Rng,
+    kind: AntKindType = AntKind.HARVESTER,
+  ) {
     this.x = x;
     this.y = y;
     this.nestX = nestX;
     this.nestY = nestY;
+    this.kind = kind;
     this.dir = rng.int(8);
+  }
+
+  get nestCell(): number {
+    return this.kind === AntKind.FIRE ? Cell.FIRE_NEST : Cell.NEST;
+  }
+
+  private homeTrail(world: World): DiffusingField {
+    return this.kind === AntKind.FIRE ? world.fireHomeField : world.homeField;
+  }
+
+  private foodTrail(world: World): DiffusingField {
+    return this.kind === AntKind.FIRE ? world.fireFoodField : world.foodField;
   }
 
   update(world: World): void {
@@ -60,7 +83,7 @@ export class Ant {
 
   private search(world: World): void {
     const i = world.idx(this.x, this.y);
-    world.homeField.deposit(this.x, this.y, SimConfig.pheromone.exploreDeposit);
+    this.homeTrail(world).deposit(this.x, this.y, SimConfig.pheromone.exploreDeposit);
 
     if (world.cells[i] === Cell.FOOD && world.foodAmount[i] > 0.05) {
       world.foodAmount[i] -= 0.1;
@@ -76,20 +99,21 @@ export class Ant {
       return;
     }
 
-    this.moveAlongGradient(world, world.foodField, true);
+    this.moveAlongGradient(world, this.foodTrail(world), true);
   }
 
   private returnToNest(world: World): void {
     const i = world.idx(this.x, this.y);
-    world.foodField.deposit(this.x, this.y, SimConfig.pheromone.foodDeposit);
+    this.foodTrail(world).deposit(this.x, this.y, SimConfig.pheromone.foodDeposit);
     this.returnTicks++;
 
-    if (world.cells[i] === Cell.NEST) {
+    if (world.cells[i] === this.nestCell) {
       this.carrying = false;
       this.state = AntState.SEARCHING;
       this.returnTicks = 0;
       this.energy = Math.min(this.energy + SimConfig.ant.nestEnergyGain, 1.0);
-      world.nestFoodStore += 0.1;
+      if (this.kind === AntKind.FIRE) world.fireNestFoodStore += 0.1;
+      else world.nestFoodStore += 0.1;
       this.dir = (this.dir + 4) % 8;
       return;
     }
@@ -102,7 +126,7 @@ export class Ant {
       return;
     }
 
-    this.moveAlongGradient(world, world.homeField, false);
+    this.moveAlongGradient(world, this.homeTrail(world), false);
   }
 
   private moveAlongGradient(
@@ -126,7 +150,7 @@ export class Ant {
       let targetPull = 0;
       const targetCell = world.cells[ni];
       if (isSearching && targetCell === Cell.FOOD) targetPull = 80;
-      if (!isSearching && targetCell === Cell.NEST) targetPull = 80;
+      if (!isSearching && targetCell === this.nestCell) targetPull = 80;
 
       const weight = (pheromone * 6 + 0.1) * forwardBias + targetPull;
       candidates.push({ idx: dirIdx, nx, ny, weight });
