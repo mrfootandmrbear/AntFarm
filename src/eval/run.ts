@@ -39,6 +39,8 @@ export interface EvalReport {
   relocation?: RelocationResult;
   rivalry?: RivalryResult;
   predation?: PredationResult;
+  multiFood?: MultiFoodResult;
+  chokepoint?: ChokepointResult;
   soak?: SoakResult;
 }
 
@@ -81,6 +83,28 @@ export interface PredationResult {
   huntedAnts: number;
   controlAnts: number;
   lizardsAlive: number;
+}
+
+export interface MultiFoodResult {
+  pass: boolean;
+  notes: string[];
+  nearTrail: number;
+  farTrail: number;
+  nearEaten: number;
+  farEaten: number;
+  delivered: number;
+}
+
+export interface ChokepointResult {
+  pass: boolean;
+  notes: string[];
+  corridorCells: number;
+  firstThrough: number | null;
+  firstDelivery: number | null;
+  transits: number;
+  pastTheWall: number;
+  corridorTrail: number;
+  delivered: number;
 }
 
 export interface SoakResult {
@@ -522,6 +546,154 @@ export function runLizardPredation(seed = DEFAULT_SEED): PredationResult {
 }
 
 /**
+ * E_MULTI_FOOD: two piles at different distances from one nest.
+ *
+ * The worry is first-discovery lock-in — a colony that finds the near pile,
+ * paves a trail to it, and never notices the far one. Both piles should end up
+ * with a food trail of their own and visible bites taken out of them.
+ */
+export function runMultiFood(seed = DEFAULT_SEED): MultiFoodResult {
+  const notes: string[] = [];
+  const near = { x: 52, y: 22 };
+  const far = { x: 100, y: 58 };
+  const horizon = 6000;
+
+  const engine = new SimulationEngine(W, H, seed);
+  engine.allowSpawn = false;
+  engine.allowWater = false;
+  engine.fillDisk(NEST.x, NEST.y, 3, Cell.NEST);
+  engine.fillDisk(near.x, near.y, 4, Cell.FOOD);
+  engine.fillDisk(far.x, far.y, 4, Cell.FOOD);
+  engine.spawnAntsNear(NEST.x, NEST.y, ANTS);
+  engine.world.initialFoodMass = engine.world.totalFoodMass();
+
+  const pileMass = (p: { x: number; y: number }): number => {
+    let s = 0;
+    for (let y = p.y - 6; y <= p.y + 6; y++) {
+      for (let x = p.x - 6; x <= p.x + 6; x++) {
+        if (engine.world.inBounds(x, y)) s += engine.world.foodAmount[engine.world.idx(x, y)];
+      }
+    }
+    return s;
+  };
+  const pileTrail = (p: { x: number; y: number }): number =>
+    engine.world.fieldMassRect(engine.world.foodField, p.x - 7, p.y - 7, p.x + 7, p.y + 7);
+
+  const nearStart = pileMass(near);
+  const farStart = pileMass(far);
+  while (engine.world.tickCount < horizon) engine.tick();
+
+  const nearTrail = pileTrail(near);
+  const farTrail = pileTrail(far);
+  const nearEaten = nearStart - pileMass(near);
+  const farEaten = farStart - pileMass(far);
+
+  if (nearTrail < 20) notes.push(`near pile has no trail (${nearTrail.toFixed(1)})`);
+  if (farTrail < 20) notes.push(`far pile has no trail (${farTrail.toFixed(1)})`);
+  if (nearEaten < 2) notes.push(`near pile untouched (${nearEaten.toFixed(1)} eaten)`);
+  if (farEaten < 2) notes.push(`far pile untouched (${farEaten.toFixed(1)} eaten)`);
+
+  const pass = nearTrail >= 20 && farTrail >= 20 && nearEaten >= 2 && farEaten >= 2;
+  if (pass) notes.push('both piles carry their own trail; neither was ignored');
+
+  return {
+    pass,
+    notes,
+    nearTrail,
+    farTrail,
+    nearEaten,
+    farEaten,
+    delivered: engine.world.foodDelivered,
+  };
+}
+
+/**
+ * E_CHOKEPOINT: the only way to the food is a two-cell slot through rock.
+ *
+ * Traffic in both directions has to share it, and the two trails have to
+ * survive being squeezed into the same cells. Rock, not dirt, so nobody digs
+ * their way around the problem.
+ */
+export function runChokepoint(seed = DEFAULT_SEED): ChokepointResult {
+  const notes: string[] = [];
+  const food = { x: 100, y: 40 };
+  const wallX0 = 57;
+  const wallX1 = 63;
+  const gapY0 = 39;
+  const gapY1 = 40;
+  const horizon = 8000;
+
+  const engine = new SimulationEngine(W, H, seed);
+  engine.allowSpawn = false;
+  engine.allowWater = false;
+  engine.fillDisk(NEST.x, NEST.y, 3, Cell.NEST);
+  engine.fillDisk(food.x, food.y, 4, Cell.FOOD);
+  for (let x = wallX0; x <= wallX1; x++) {
+    for (let y = 0; y < H; y++) {
+      if (y === gapY0 || y === gapY1) continue;
+      engine.world.set(x, y, Cell.WALL);
+    }
+  }
+  engine.spawnAntsNear(NEST.x, NEST.y, ANTS);
+  engine.world.initialFoodMass = engine.world.totalFoodMass();
+
+  let transits = 0;
+  let firstThrough: number | null = null;
+  let firstDelivery: number | null = null;
+  while (engine.world.tickCount < horizon) {
+    engine.tick();
+    const t = engine.world.tickCount;
+    if (firstDelivery === null && engine.world.foodDelivered > 0.05) firstDelivery = t;
+    for (const a of engine.ants) {
+      if (!a.alive) continue;
+      if (a.x < wallX0 || a.x > wallX1) continue;
+      if (a.y !== gapY0 && a.y !== gapY1) continue;
+      transits++;
+      if (firstThrough === null) firstThrough = t;
+    }
+  }
+
+  let pastTheWall = 0;
+  for (const a of engine.ants) if (a.alive && a.x > wallX1) pastTheWall++;
+  const corridorTrail = engine.world.fieldMassRect(
+    engine.world.foodField,
+    wallX0,
+    gapY0,
+    wallX1,
+    gapY1,
+  );
+  const delivered = engine.world.foodDelivered;
+
+  if (firstThrough === null) notes.push('no ant ever entered the corridor');
+  else if (firstThrough > 1500) notes.push(`corridor found very late (${firstThrough} ticks)`);
+  if (transits < 300) notes.push(`corridor barely used (${transits} cell-visits)`);
+  if (delivered < 0.3) notes.push('food never made it back through the corridor');
+  if (corridorTrail < 1) {
+    notes.push(`no food trail laid through the slot (${corridorTrail.toFixed(1)})`);
+  }
+
+  const pass =
+    firstThrough !== null &&
+    firstThrough <= 1500 &&
+    transits >= 300 &&
+    delivered >= 0.3 &&
+    corridorTrail >= 1;
+  if (pass) notes.push('two-way traffic squeezed through a two-cell slot and delivered');
+
+  return {
+    pass,
+    notes,
+    corridorCells: 2,
+    firstThrough,
+    firstDelivery,
+    transits,
+    pastTheWall,
+    corridorTrail,
+    delivered,
+  };
+}
+
+/**
  * E_SOAK: 100k ticks of one colony on one pile, watching for slow rot.
  *
  * The granary is the thing under test. Hatching spends it, hungry searchers sip
@@ -657,8 +829,14 @@ export function formatReport(r: EvalReport): string {
     r.predation
       ? `LIZARD: ${yn(r.predation.pass)} — ${r.predation.startAnts} ants → ${r.predation.huntedAnts} hunted / ${r.predation.controlAnts} unhunted; ${r.predation.lizardsAlive} lizard${r.predation.lizardsAlive === 1 ? '' : 's'} left${r.predation.notes.length ? ' — ' + r.predation.notes.join('; ') : ''}`
       : '',
+    r.multiFood
+      ? `MULTI: ${yn(r.multiFood.pass)} — trails near ${r.multiFood.nearTrail.toFixed(0)} / far ${r.multiFood.farTrail.toFixed(0)}; eaten near ${r.multiFood.nearEaten.toFixed(1)} / far ${r.multiFood.farEaten.toFixed(1)}${r.multiFood.notes.length ? ' — ' + r.multiFood.notes.join('; ') : ''}`
+      : '',
+    r.chokepoint
+      ? `CHOKE: ${yn(r.chokepoint.pass)} — ${r.chokepoint.corridorCells}-cell slot; first through ${r.chokepoint.firstThrough ?? 'never'} ticks; ${r.chokepoint.transits} cell-visits; delivered ${r.chokepoint.delivered.toFixed(1)}; slot trail ${r.chokepoint.corridorTrail.toFixed(1)}${r.chokepoint.notes.length ? ' — ' + r.chokepoint.notes.join('; ') : ''}`
+      : '',
     r.soak
-      ? `SOAK: ${yn(r.soak.pass)} — ${(r.soak.ticks / 1000).toFixed(0)}k ticks; ants ${r.soak.minAnts}..${r.soak.maxAnts} → ${r.soak.endAnts}; granary ${r.soak.minStore.toFixed(2)}..${r.soak.maxStore.toFixed(2)} of ${r.soak.granaryCeiling.toFixed(0)}; food left ${r.soak.foodLeft.toFixed(0)}; ${r.soak.nonFiniteCells} non-finite${r.soak.notes.length ? ' — ' + r.soak.notes.join('; ') : ''}`
+      ? `SOAK:${yn(r.soak.pass)} — ${(r.soak.ticks / 1000).toFixed(0)}k ticks; ants ${r.soak.minAnts}..${r.soak.maxAnts} → ${r.soak.endAnts}; granary ${r.soak.minStore.toFixed(2)}..${r.soak.maxStore.toFixed(2)} of ${r.soak.granaryCeiling.toFixed(0)}; food left ${r.soak.foodLeft.toFixed(0)}; ${r.soak.nonFiniteCells} non-finite${r.soak.notes.length ? ' — ' + r.soak.notes.join('; ') : ''}`
       : '',
   ]
     .filter((line) => line !== '')
@@ -674,6 +852,8 @@ if (isMain) {
   report.relocation = runRelocation(seed);
   report.rivalry = runFireRivalry(seed);
   report.predation = runLizardPredation(seed);
+  report.multiFood = runMultiFood(seed);
+  report.chokepoint = runChokepoint(seed);
   // The soak is ~20s on its own. `--skip-soak` keeps the tuner's loop short;
   // CI runs the whole thing.
   if (!process.argv.includes('--skip-soak')) report.soak = runSoak(seed);
