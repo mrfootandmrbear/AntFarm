@@ -29,12 +29,6 @@ function sortedUrls(prefix: string): string[] {
     .map(([, url]) => url);
 }
 
-interface TexSamp {
-  w: number;
-  h: number;
-  data: Uint8ClampedArray;
-}
-
 /**
  * Draws the simulation with PixiJS. The world grid becomes a GPU texture fed
  * directly from a typed-array pixel buffer; ants are pooled sprites from the
@@ -56,6 +50,7 @@ export class PixiRenderer {
   private vaporSource!: BufferImageSource;
   private vaporSprite!: Sprite;
 
+  private sceneryContainer!: Container;
   private antContainer!: Container;
   private lizardContainer!: Container;
   private fallbackAnt!: Texture;
@@ -69,10 +64,12 @@ export class PixiRenderer {
   private lizardPool: Sprite[] = [];
 
   private cellNoise!: Int8Array;
-  private foodTex: TexSamp | null = null;
-  private nestTex: TexSamp | null = null;
-  private fireNestTex: TexSamp | null = null;
-  private rockTex: TexSamp | null = null;
+  private foodSpriteTex: Texture | null = null;
+  private nestSpriteTex: Texture | null = null;
+  private fireNestSpriteTex: Texture | null = null;
+  private rockSpriteTex: Texture | null = null;
+  private sceneryDirty = true;
+  private sceneryTick = -1;
 
   async init(parent: HTMLElement, world: World, cellSize = 4): Promise<void> {
     this.world = world;
@@ -117,6 +114,9 @@ export class PixiRenderer {
     this.vaporSprite.blendMode = 'normal';
     this.app.stage.addChild(this.vaporSprite);
 
+    this.sceneryContainer = new Container();
+    this.app.stage.addChild(this.sceneryContainer);
+
     this.fallbackAnt = this.makeAntTexture();
     this.walkTextures = await this.loadTextures(sortedUrls('ant-walk-'));
     this.carryTextures = await this.loadTextures(sortedUrls('ant-carry-'));
@@ -139,14 +139,23 @@ export class PixiRenderer {
     this.lizardContainer = new Container();
     this.app.stage.addChild(this.lizardContainer);
 
-    this.foodTex = await this.loadSamp(assetUrl('food.png'));
-    this.nestTex = await this.loadSamp(assetUrl('nest.png'));
-    this.fireNestTex = await this.loadSamp(assetUrl('fire-nest.png'));
-    this.rockTex = await this.loadSamp(assetUrl('rock.png'));
+    this.foodSpriteTex = await this.loadTexture(assetUrl('food.png'));
+    this.nestSpriteTex = await this.loadTexture(assetUrl('nest.png'));
+    this.fireNestSpriteTex = await this.loadTexture(assetUrl('fire-nest.png'));
+    this.rockSpriteTex = await this.loadTexture(assetUrl('rock.png'));
 
     this.cellNoise = new Int8Array(w * h);
     for (let i = 0; i < this.cellNoise.length; i++) {
       this.cellNoise[i] = ((Math.random() * 10) | 0) - 5;
+    }
+  }
+
+  private async loadTexture(url: string | undefined): Promise<Texture | null> {
+    if (!url) return null;
+    try {
+      return (await Assets.load(url)) as Texture;
+    } catch {
+      return null;
     }
   }
 
@@ -163,25 +172,6 @@ export class PixiRenderer {
     return out;
   }
 
-  private async loadSamp(url: string | undefined): Promise<TexSamp | null> {
-    if (!url) return null;
-    try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      const bmp = await createImageBitmap(blob);
-      const canvas = document.createElement('canvas');
-      canvas.width = bmp.width;
-      canvas.height = bmp.height;
-      const ctx = canvas.getContext('2d')!;
-      ctx.drawImage(bmp, 0, 0);
-      const img = ctx.getImageData(0, 0, bmp.width, bmp.height);
-      bmp.close();
-      return { w: img.width, h: img.height, data: img.data };
-    } catch {
-      return null;
-    }
-  }
-
   private makeAntTexture(): Texture {
     const rx = Math.max(1.5, this.cellSize * 0.7);
     const ry = Math.max(1, this.cellSize * 0.45);
@@ -196,15 +186,13 @@ export class PixiRenderer {
   render(engine: SimulationEngine): void {
     this.updateTerrain();
     this.updateVapor();
+    this.updateScenery();
     this.updateAnts(engine);
     this.updateLizards(engine);
   }
 
-  private sample(tex: TexSamp, x: number, y: number): [number, number, number, number] {
-    const u = ((x * 13 + 7) % tex.w + tex.w) % tex.w;
-    const v = ((y * 11 + 3) % tex.h + tex.h) % tex.h;
-    const i = (v * tex.w + u) * 4;
-    return [tex.data[i], tex.data[i + 1], tex.data[i + 2], tex.data[i + 3]];
+  invalidateScenery(): void {
+    this.sceneryDirty = true;
   }
 
   private updateTerrain(): void {
@@ -228,21 +216,17 @@ export class PixiRenderer {
         switch (cell) {
           case Cell.EMPTY:
           case Cell.DIRT:
-            r = 139 + noise;
-            g = 115 + noise;
-            b = 72 + (noise >> 1);
+            {
+              const broad = Math.sin(x * 0.055) * 5 + Math.cos(y * 0.047) * 4 + Math.sin((x + y) * 0.021) * 3;
+              r = 145 + broad + noise * 0.45;
+              g = 119 + broad * 0.72 + noise * 0.35;
+              b = 75 + broad * 0.35 + (noise >> 2);
+            }
             break;
           case Cell.WALL: {
-            const samp = this.rockTex ? this.sample(this.rockTex, x, y) : null;
-            if (samp && samp[3] > 40) {
-              r = samp[0] * 0.65 + 40;
-              g = samp[1] * 0.65 + 35;
-              b = samp[2] * 0.65 + 30;
-            } else {
-              r = 90 + noise;
-              g = 85 + noise;
-              b = 80 + noise;
-            }
+            r = 91 + noise * 0.4;
+            g = 82 + noise * 0.35;
+            b = 68 + noise * 0.25;
             break;
           }
           case Cell.WATER: {
@@ -254,44 +238,23 @@ export class PixiRenderer {
           }
           case Cell.FOOD: {
             const brightness = 0.5 + world.foodAmount[i] * 0.5;
-            const samp = this.foodTex ? this.sample(this.foodTex, x, y) : null;
-            if (samp && samp[3] > 40) {
-              r = samp[0] * brightness;
-              g = samp[1] * brightness;
-              b = samp[2] * brightness;
-            } else {
-              r = 80 * brightness + noise;
-              g = 180 * brightness + noise;
-              b = 50 * brightness + noise * 0.3;
-            }
+            r = 92 * brightness + noise;
+            g = 146 * brightness + noise;
+            b = 53 * brightness + noise * 0.3;
             break;
           }
           case Cell.NEST: {
             const pulse = Math.sin(tick * 0.03) * 8;
-            const samp = this.nestTex ? this.sample(this.nestTex, x, y) : null;
-            if (samp && samp[3] > 40) {
-              r = samp[0] + pulse * 0.4;
-              g = samp[1] + pulse * 0.2;
-              b = samp[2];
-            } else {
-              r = 140 + pulse + noise;
-              g = 70 + pulse * 0.3;
-              b = 45 + pulse * 0.3;
-            }
+            r = 142 + pulse + noise;
+            g = 79 + pulse * 0.3;
+            b = 49 + pulse * 0.3;
             break;
           }
           case Cell.FIRE_NEST: {
             const pulse = Math.sin(tick * 0.03) * 8;
-            const samp = this.fireNestTex ? this.sample(this.fireNestTex, x, y) : null;
-            if (samp && samp[3] > 40) {
-              r = samp[0] * 0.85 + pulse * 0.3;
-              g = samp[1] * 0.7;
-              b = samp[2] * 0.55;
-            } else {
-              r = 90 + pulse + noise;
-              g = 40 + pulse * 0.2;
-              b = 28;
-            }
+            r = 96 + pulse + noise;
+            g = 43 + pulse * 0.2;
+            b = 29;
             break;
           }
           default:
@@ -344,7 +307,8 @@ export class PixiRenderer {
       const hv = home[i];
       const ff = fireFood[i];
       const fh = fireHome[i];
-      const dens = Math.min(fv / 5 + hv / 8 + ff / 5 + fh / 8, 1);
+      const rawDens = Math.min(fv / 5 + hv / 8 + ff / 5 + fh / 8, 1);
+      const dens = Math.pow(rawDens, 0.72);
       if (dens < 0.02) {
         buf[p] = 0;
         buf[p + 1] = 0;
@@ -366,10 +330,68 @@ export class PixiRenderer {
       buf[p] = r;
       buf[p + 1] = g;
       buf[p + 2] = b;
-      buf[p + 3] = Math.min(dens * 150, 140);
+      buf[p + 3] = Math.min(dens * 118, 112);
     }
 
     this.vaporSource.update();
+  }
+
+  /** Draw one coherent illustration per patch instead of stamping every grid cell. */
+  private updateScenery(): void {
+    const tick = this.world.tickCount;
+    if (!this.sceneryDirty && (tick === this.sceneryTick || tick % 20 !== 0)) return;
+    this.sceneryDirty = false;
+    this.sceneryTick = tick;
+    this.sceneryContainer.removeChildren().forEach((child) => child.destroy());
+
+    const { width: w, height: h, cells } = this.world;
+    const seen = new Uint8Array(w * h);
+    const types = [Cell.FOOD, Cell.NEST, Cell.FIRE_NEST, Cell.WALL];
+    for (const type of types) {
+      const texture = type === Cell.FOOD ? this.foodSpriteTex : type === Cell.NEST ? this.nestSpriteTex : type === Cell.FIRE_NEST ? this.fireNestSpriteTex : this.rockSpriteTex;
+      if (!texture) continue;
+      for (let start = 0; start < cells.length; start++) {
+        if (seen[start] || cells[start] !== type) continue;
+        const queue = [start];
+        seen[start] = 1;
+        const members: number[] = [];
+        let sx = 0;
+        let sy = 0;
+        for (let q = 0; q < queue.length; q++) {
+          const at = queue[q];
+          members.push(at);
+          const x = at % w;
+          const y = (at / w) | 0;
+          sx += x;
+          sy += y;
+          const near = [at - 1, at + 1, at - w, at + w];
+          for (const next of near) {
+            if (next < 0 || next >= cells.length || seen[next] || cells[next] !== type) continue;
+            const nx = next % w;
+            if (Math.abs(nx - x) > 1) continue;
+            seen[next] = 1;
+            queue.push(next);
+          }
+        }
+
+        const stride = type === Cell.WALL ? Math.max(1, Math.floor(members.length / 12)) : members.length;
+        const points = type === Cell.WALL ? members.filter((_, i) => i % stride === 0) : [members[0]];
+        for (const point of points) {
+          const sprite = new Sprite(texture);
+          sprite.anchor.set(0.5);
+          const x = type === Cell.WALL ? point % w : sx / members.length;
+          const y = type === Cell.WALL ? (point / w) | 0 : sy / members.length;
+          sprite.x = (x + 0.5) * this.cellSize;
+          sprite.y = (y + 0.5) * this.cellSize;
+          const diameter = type === Cell.WALL ? 5.5 : Math.max(5, Math.min(12, Math.sqrt(members.length) * 2.3));
+          const target = diameter * this.cellSize;
+          sprite.scale.set(target / Math.max(texture.width, texture.height));
+          sprite.rotation = type === Cell.WALL ? ((point * 17) % 9 - 4) * 0.04 : 0;
+          sprite.alpha = type === Cell.FOOD ? 0.95 : 1;
+          this.sceneryContainer.addChild(sprite);
+        }
+      }
+    }
   }
 
   private updateAnts(engine: SimulationEngine): void {
@@ -386,7 +408,7 @@ export class PixiRenderer {
       const walkN = walk.length;
       const carryN = carry.length;
       const usingFallback = walk[0] === this.fallbackAnt;
-      const scale = usingFallback ? 1 : isFire ? (cs * 2.5) / 70 : (cs * 2.8) / 110;
+      const scale = usingFallback ? 1 : isFire ? (cs * 3.0) / 70 : (cs * 3.25) / 110;
       let sprite = this.antPool[s];
       if (!sprite) {
         sprite = new Sprite(walk[0]);

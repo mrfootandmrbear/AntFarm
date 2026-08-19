@@ -12,21 +12,22 @@ interface Tool {
   category: string;
   kind: ToolKind;
   cell?: CellType;
+  icon: string;
 }
 
 const TOOLS: Tool[] = [
-  { id: 'erase', label: 'Erase', color: '#8b7348', key: '0', category: 'Terrain', kind: 'cell', cell: Cell.DIRT },
-  { id: 'rock', label: 'Rock', color: '#5a5550', key: '1', category: 'Terrain', kind: 'cell', cell: Cell.WALL },
-  { id: 'water', label: 'Water', color: '#2864aa', key: '2', category: 'Water', kind: 'cell', cell: Cell.WATER },
-  { id: 'food', label: 'Food', color: '#2ecc71', key: '3', category: 'Plants & Food', kind: 'cell', cell: Cell.FOOD },
-  { id: 'nest', label: 'Nest', color: '#8c4630', key: '4', category: 'Structures', kind: 'cell', cell: Cell.NEST },
-  { id: 'firenest', label: 'Fire nest', color: '#5a2418', key: '5', category: 'Structures', kind: 'cell', cell: Cell.FIRE_NEST },
-  { id: 'ant', label: 'Ant', color: '#c45a28', key: '6', category: 'Bugs', kind: 'ant' },
-  { id: 'fireant', label: 'Fire ant', color: '#1a1210', key: '7', category: 'Bugs', kind: 'fireant' },
-  { id: 'lizard', label: 'Lizard', color: '#b08958', key: '8', category: 'Bugs', kind: 'lizard' },
+  { id: 'erase', label: 'Bare soil', color: '#9c7748', key: '0', category: 'Ground', kind: 'cell', cell: Cell.DIRT, icon: '◌' },
+  { id: 'rock', label: 'Rock', color: '#69645b', key: '1', category: 'Ground', kind: 'cell', cell: Cell.WALL, icon: '◆' },
+  { id: 'water', label: 'Water', color: '#3c91b9', key: '2', category: 'Ground', kind: 'cell', cell: Cell.WATER, icon: '≈' },
+  { id: 'food', label: 'Food', color: '#64a643', key: '3', category: 'Life', kind: 'cell', cell: Cell.FOOD, icon: '✿' },
+  { id: 'nest', label: 'Ant nest', color: '#a45f38', key: '4', category: 'Homes', kind: 'cell', cell: Cell.NEST, icon: '⌂' },
+  { id: 'firenest', label: 'Fire nest', color: '#713522', key: '5', category: 'Homes', kind: 'cell', cell: Cell.FIRE_NEST, icon: '⌂' },
+  { id: 'ant', label: 'Ant', color: '#c45a28', key: '6', category: 'Creatures', kind: 'ant', icon: '•' },
+  { id: 'fireant', label: 'Fire ant', color: '#321b16', key: '7', category: 'Creatures', kind: 'fireant', icon: '•' },
+  { id: 'lizard', label: 'Lizard', color: '#b08958', key: '8', category: 'Creatures', kind: 'lizard', icon: '⌁' },
 ];
 
-const CATEGORY_ORDER = ['Terrain', 'Water', 'Plants & Food', 'Structures', 'Bugs'];
+const CATEGORY_ORDER = ['Ground', 'Life', 'Homes', 'Creatures'];
 
 export class UI {
   private engine: SimulationEngine;
@@ -44,6 +45,7 @@ export class UI {
 
   private pauseBtn!: HTMLButtonElement;
   private readoutEl!: HTMLElement;
+  private brushPreview!: HTMLElement;
 
   constructor(engine: SimulationEngine, renderer: PixiRenderer) {
     this.engine = engine;
@@ -55,6 +57,7 @@ export class UI {
     this.buildTransport();
     this.buildReadout();
     this.buildStatusBar();
+    this.buildBrushPreview();
     this.bindCanvas();
     this.bindKeyboard();
     this.updateInfo();
@@ -77,7 +80,7 @@ export class UI {
         btn.dataset.tool = tool.id;
         if (tool.id === this.selected.id) btn.classList.add('active');
 
-        const swatch = el('span', 'swatch');
+        const swatch = el('span', 'swatch', tool.icon);
         swatch.style.backgroundColor = tool.color;
         btn.appendChild(swatch);
         btn.appendChild(document.createTextNode(tool.label));
@@ -110,6 +113,11 @@ export class UI {
     brushRow.appendChild(value);
     brushGroup.appendChild(brushRow);
     palette.appendChild(brushGroup);
+  }
+
+  private buildBrushPreview(): void {
+    this.brushPreview = el('div', 'brush-preview');
+    document.getElementById('stage')!.appendChild(this.brushPreview);
   }
 
   private selectTool(tool: Tool): void {
@@ -195,13 +203,19 @@ export class UI {
     const resetBtn = document.createElement('button');
     resetBtn.className = 'btn';
     resetBtn.textContent = 'Reset';
-    resetBtn.addEventListener('click', () => this.engine.reset());
+    resetBtn.addEventListener('click', () => {
+      this.engine.reset();
+      this.renderer.invalidateScenery();
+    });
     actionGroup.appendChild(resetBtn);
 
     const clearBtn = document.createElement('button');
     clearBtn.className = 'btn';
     clearBtn.textContent = 'Clear';
-    clearBtn.addEventListener('click', () => this.engine.clear());
+    clearBtn.addEventListener('click', () => {
+      this.engine.clear();
+      this.renderer.invalidateScenery();
+    });
     actionGroup.appendChild(clearBtn);
 
     bar.appendChild(actionGroup);
@@ -219,6 +233,7 @@ export class UI {
     });
 
     this.canvas.addEventListener('mousemove', (e) => {
+      this.updateBrushPreview(e);
       if (!this.painting) return;
       const { x, y } = this.canvasToGrid(e);
       if (this.lastPaintX >= 0) {
@@ -237,6 +252,21 @@ export class UI {
     });
 
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.canvas.addEventListener('mouseenter', (e) => this.updateBrushPreview(e));
+    this.canvas.addEventListener('mouseleave', () => this.brushPreview.classList.remove('visible'));
+  }
+
+  private updateBrushPreview(e: MouseEvent): void {
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const stageRect = document.getElementById('stage')!.getBoundingClientRect();
+    const cellPx = canvasRect.width / this.engine.world.width;
+    const size = Math.max(cellPx * (this.brushSize * 2 + 1), 10);
+    this.brushPreview.style.width = `${size}px`;
+    this.brushPreview.style.height = `${size}px`;
+    this.brushPreview.style.left = `${e.clientX - stageRect.left}px`;
+    this.brushPreview.style.top = `${e.clientY - stageRect.top}px`;
+    this.brushPreview.style.setProperty('--brush-color', this.selected.color);
+    this.brushPreview.classList.add('visible');
   }
 
   private canvasToGrid(e: MouseEvent): { x: number; y: number } {
@@ -272,6 +302,7 @@ export class UI {
           this.engine.spawnAntAt(x, y);
         } else {
           world.set(x, y, this.selected.cell!);
+          this.renderer.invalidateScenery();
         }
       }
     }
