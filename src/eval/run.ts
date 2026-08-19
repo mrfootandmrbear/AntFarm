@@ -34,6 +34,26 @@ export interface EvalReport {
   core: KindResult;
   adaptation: KindResult;
   memory: KindResult;
+  pulse?: PulseResult;
+  relocation?: RelocationResult;
+}
+
+export interface PulseResult {
+  pass: boolean;
+  notes: string[];
+  abundanceAnts: number;
+  abundanceStore: number;
+  abundanceFoodLeft: number;
+  abundanceDelivered: number;
+  scarcityAnts: number;
+}
+
+export interface RelocationResult {
+  pass: boolean;
+  notes: string[];
+  newDeliveryTicks: number | null;
+  oldCorridorAfter: number;
+  newCorridorAfter: number;
 }
 
 function makeEngine(seed: number): SimulationEngine {
@@ -84,7 +104,7 @@ export function runEval(seed = DEFAULT_SEED): EvalReport {
     engine.tick();
     const t = engine.world.tickCount;
     if (firstDiscovery === null && engine.carryingCount() > 0) firstDiscovery = t;
-    if (firstDelivery === null && engine.world.nestFoodStore > 0.05) firstDelivery = t;
+    if (firstDelivery === null && engine.world.foodDelivered > 0.05) firstDelivery = t;
 
     const carrying = engine.carryingCount();
     if (firstDiscovery !== null && t >= firstDiscovery + 80 && carrying >= 6) {
@@ -104,7 +124,7 @@ export function runEval(seed = DEFAULT_SEED): EvalReport {
     if (stableRecruitment !== null && t >= stableRecruitment + 900) break;
   }
 
-  const delivered = engine.world.nestFoodStore;
+  const delivered = engine.world.foodDelivered;
   const initial = engine.world.initialFoodMass || 1;
   // Each pickup is 0.1 food units; nest store += 0.1 per delivery.
   const foodDeliveredPct = (delivered / initial) * 100;
@@ -137,7 +157,7 @@ export function runEval(seed = DEFAULT_SEED): EvalReport {
   // ---- ADAPTATION: rock wall across the corridor ----
   const midX = Math.floor((NEST.x + FOOD.x) / 2);
   engine.placeWallWithGap(midX, 4, H - 5, 10, 4); // gap at the north
-  const storeBeforeWall = engine.world.nestFoodStore;
+  const storeBeforeWall = engine.world.foodDelivered;
   let detourVisits = 0;
   const adaptHorizon = engine.world.tickCount + 3500;
   while (engine.world.tickCount < adaptHorizon) {
@@ -147,7 +167,7 @@ export function runEval(seed = DEFAULT_SEED): EvalReport {
       if (Math.abs(a.x - midX) <= 1 && a.y <= 16) detourVisits++;
     }
   }
-  const deliveredAfterWall = engine.world.nestFoodStore - storeBeforeWall;
+  const deliveredAfterWall = engine.world.foodDelivered - storeBeforeWall;
   const wallAdaptation = deliveredAfterWall >= 0.4 && detourVisits >= 20;
   if (deliveredAfterWall < 0.4) notesAdapt.push('no meaningful delivery after wall');
   if (detourVisits < 20) notesAdapt.push('ants did not use the northern gap');
@@ -199,6 +219,116 @@ export function runEval(seed = DEFAULT_SEED): EvalReport {
   };
 }
 
+/** E10/E11-lite: food should sustain a colony; no food should not. Spawn is on. */
+export function runPulse(seed = DEFAULT_SEED): PulseResult {
+  const notes: string[] = [];
+  const horizon = 22000;
+
+  const rich = new SimulationEngine(W, H, seed);
+  rich.allowWater = false;
+  rich.fillDisk(NEST.x, NEST.y, 3, Cell.NEST);
+  rich.fillDisk(FOOD.x, FOOD.y, 4, Cell.FOOD);
+  rich.spawnAntsNear(NEST.x, NEST.y, ANTS);
+  while (rich.world.tickCount < horizon) rich.tick();
+
+  const poor = new SimulationEngine(W, H, seed);
+  poor.allowWater = false;
+  poor.fillDisk(NEST.x, NEST.y, 3, Cell.NEST);
+  poor.spawnAntsNear(NEST.x, NEST.y, ANTS);
+  while (poor.world.tickCount < horizon) poor.tick();
+
+  const abundanceAnts = rich.aliveCount();
+  const abundanceStore = rich.world.nestFoodStore;
+  const abundanceFoodLeft = rich.world.totalFoodMass();
+  const abundanceDelivered = rich.world.foodDelivered;
+  const scarcityAnts = poor.aliveCount();
+
+  if (abundanceAnts < 70) notes.push(`abundance colony collapsed (${abundanceAnts} ants)`);
+  if (abundanceDelivered < 2) notes.push('abundance delivered almost nothing');
+  if (scarcityAnts > 25) notes.push(`scarcity colony did not shrink (${scarcityAnts} ants)`);
+
+  const pass = abundanceAnts >= 70 && abundanceDelivered >= 2 && scarcityAnts <= 25;
+  if (pass) notes.push('food sustains the mound; empty world does not');
+
+  return {
+    pass,
+    notes,
+    abundanceAnts,
+    abundanceStore,
+    abundanceFoodLeft,
+    abundanceDelivered,
+    scarcityAnts,
+  };
+}
+
+/** E07: after a trail exists, move the food. Old scent should yield; a new corridor should work. */
+export function runRelocation(seed = DEFAULT_SEED): RelocationResult {
+  const notes: string[] = [];
+  const engine = makeEngine(seed);
+  const food2 = { x: FOOD.x, y: 12 };
+
+  let disc: number | null = null;
+  let rec: number | null = null;
+  let streak = 0;
+  while (engine.world.tickCount < 4500) {
+    engine.tick();
+    const t = engine.world.tickCount;
+    if (disc === null && engine.carryingCount() > 0) disc = t;
+    const carrying = engine.carryingCount();
+    if (disc !== null && t >= disc + 80 && carrying >= 6) {
+      streak++;
+      if (streak >= 40 && rec === null) rec = t;
+    } else streak = 0;
+    if (rec !== null && engine.world.foodDelivered > 0.05) break;
+  }
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (engine.world.get(x, y) === Cell.FOOD) engine.world.set(x, y, Cell.DIRT);
+    }
+  }
+  engine.fillDisk(food2.x, food2.y, 4, Cell.FOOD);
+
+  const delivered0 = engine.world.foodDelivered;
+  const start = engine.world.tickCount;
+  let newDeliveryTicks: number | null = null;
+  while (engine.world.tickCount < start + 4000) {
+    engine.tick();
+    if (newDeliveryTicks === null && engine.world.foodDelivered >= delivered0 + 0.4) {
+      newDeliveryTicks = engine.world.tickCount - start;
+    }
+  }
+
+  const oldCorridorAfter = engine.world.fieldMassRect(
+    engine.world.foodField,
+    NEST.x + 8,
+    NEST.y - 5,
+    FOOD.x - 8,
+    NEST.y + 5,
+  );
+  const newCorridorAfter = engine.world.fieldMassRect(
+    engine.world.foodField,
+    NEST.x + 8,
+    food2.y - 6,
+    FOOD.x - 8,
+    food2.y + 6,
+  );
+
+  if (newDeliveryTicks === null) notes.push('no deliveries from the new pile');
+  if (newCorridorAfter < 12) notes.push(`new corridor weak (${newCorridorAfter.toFixed(1)})`);
+  if (newCorridorAfter < oldCorridorAfter * 0.45) {
+    notes.push('old corridor still dominates after the move');
+  }
+
+  const pass =
+    newDeliveryTicks !== null &&
+    newCorridorAfter >= 12 &&
+    newCorridorAfter >= oldCorridorAfter * 0.45;
+  if (pass) notes.push('moved food; traffic found the new pile');
+
+  return { pass, notes, newDeliveryTicks, oldCorridorAfter, newCorridorAfter };
+}
+
 export function formatReport(r: EvalReport): string {
   const yn = (p: boolean) => (p ? 'PASS' : 'FAIL');
   return [
@@ -216,7 +346,15 @@ export function formatReport(r: EvalReport): string {
     `CORE: ${yn(r.core.pass)}${r.core.notes.length ? ' — ' + r.core.notes.join('; ') : ''}`,
     `ADAPTATION: ${yn(r.adaptation.pass)}${r.adaptation.notes.length ? ' — ' + r.adaptation.notes.join('; ') : ''}`,
     `MEMORY: ${yn(r.memory.pass)}${r.memory.notes.length ? ' — ' + r.memory.notes.join('; ') : ''}`,
-  ].join('\n');
+    r.pulse
+      ? `PULSE: ${yn(r.pulse.pass)} — rich ${r.pulse.abundanceAnts} ants / store ${r.pulse.abundanceStore.toFixed(1)} / delivered ${r.pulse.abundanceDelivered.toFixed(1)}; poor ${r.pulse.scarcityAnts} ants${r.pulse.notes.length ? ' — ' + r.pulse.notes.join('; ') : ''}`
+      : '',
+    r.relocation
+      ? `RELOCATE: ${yn(r.relocation.pass)} — new delivery ${r.relocation.newDeliveryTicks ?? 'never'} ticks; corridors old ${r.relocation.oldCorridorAfter.toFixed(0)} / new ${r.relocation.newCorridorAfter.toFixed(0)}${r.relocation.notes.length ? ' — ' + r.relocation.notes.join('; ') : ''}`
+      : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
 }
 
 const isMain = process.argv[1] && /eval\/run\.(ts|js)$/.test(process.argv[1]);
@@ -224,6 +362,8 @@ if (isMain) {
   const seedArg = process.argv.find((a) => a.startsWith('--seed='));
   const seed = seedArg ? parseInt(seedArg.split('=')[1], 10) : DEFAULT_SEED;
   const report = runEval(seed);
+  report.pulse = runPulse(seed);
+  report.relocation = runRelocation(seed);
   console.log(formatReport(report));
   process.exit(report.core.pass ? 0 : 1);
 }

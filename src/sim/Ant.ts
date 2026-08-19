@@ -85,6 +85,10 @@ export class Ant {
     const i = world.idx(this.x, this.y);
     this.homeTrail(world).deposit(this.x, this.y, SimConfig.pheromone.exploreDeposit);
 
+    if (world.cells[i] === this.nestCell) {
+      this.restAtNest(world);
+    }
+
     if (world.cells[i] === Cell.FOOD && world.foodAmount[i] > 0.05) {
       world.foodAmount[i] -= 0.1;
       if (world.foodAmount[i] <= 0.05) {
@@ -112,8 +116,13 @@ export class Ant {
       this.state = AntState.SEARCHING;
       this.returnTicks = 0;
       this.energy = Math.min(this.energy + SimConfig.ant.nestEnergyGain, 1.0);
-      if (this.kind === AntKind.FIRE) world.fireNestFoodStore += 0.1;
-      else world.nestFoodStore += 0.1;
+      if (this.kind === AntKind.FIRE) {
+        world.fireNestFoodStore += 0.1;
+        world.fireFoodDelivered += 0.1;
+      } else {
+        world.nestFoodStore += 0.1;
+        world.foodDelivered += 0.1;
+      }
       this.dir = (this.dir + 4) % 8;
       return;
     }
@@ -198,6 +207,21 @@ export class Ant {
     }
     const last = candidates[candidates.length - 1];
     this.moveTo(last.nx, last.ny, last.idx);
+  }
+
+  /** Hungry searchers eat from the granary. Empty stores mean they keep starving. */
+  private restAtNest(world: World): void {
+    if (this.energy >= 0.55) return;
+    const sip = SimConfig.ant.nestSip;
+    const floor = SimConfig.colony.spawnMinStore;
+    if (this.kind === AntKind.FIRE) {
+      if (world.fireNestFoodStore < floor + sip) return;
+      world.fireNestFoodStore -= sip;
+    } else {
+      if (world.nestFoodStore < floor + sip) return;
+      world.nestFoodStore -= sip;
+    }
+    this.energy = Math.min(1, this.energy + sip * SimConfig.ant.nestSipEnergy);
   }
 
   private handleBlocked(world: World): void {

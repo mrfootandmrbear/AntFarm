@@ -94,7 +94,7 @@ export class SimulationEngine {
 
     const alive = this.aliveCount();
     if (alive >= cfg.maxAnts) return;
-    if (world.nestFoodStore < 0.3 && alive > 15) return;
+    if (world.nestFoodStore < cfg.spawnMinStore) return;
 
     const nest = world.findNestCell();
     if (!nest) return;
@@ -105,7 +105,7 @@ export class SimulationEngine {
         const ny = nest.y + dy;
         if (world.inBounds(nx, ny) && world.isPassable(nx, ny)) {
           this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.rng));
-          if (world.nestFoodStore > 0.2) world.nestFoodStore -= 0.2;
+          world.nestFoodStore -= cfg.spawnCost;
           return;
         }
       }
@@ -117,9 +117,8 @@ export class SimulationEngine {
     const cfg = SimConfig.colony;
     if (world.tickCount % cfg.spawnIntervalTicks !== 0) return;
 
-    const alive = this.aliveCount();
-    if (alive >= cfg.maxAnts) return;
-    if (world.fireNestFoodStore < 0.3 && this.fireAliveCount() > 8) return;
+    if (this.aliveCount() >= cfg.maxAnts) return;
+    if (world.fireNestFoodStore < cfg.spawnMinStore) return;
 
     const nest = world.findFireNestCell();
     if (!nest) return;
@@ -130,7 +129,7 @@ export class SimulationEngine {
         const ny = nest.y + dy;
         if (world.inBounds(nx, ny) && world.isPassable(nx, ny)) {
           this.ants.push(new Ant(nx, ny, nest.x, nest.y, world.rng, AntKind.FIRE));
-          if (world.fireNestFoodStore > 0.2) world.fireNestFoodStore -= 0.2;
+          world.fireNestFoodStore -= cfg.spawnCost;
           return;
         }
       }

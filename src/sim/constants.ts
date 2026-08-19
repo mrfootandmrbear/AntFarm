@@ -60,17 +60,25 @@ export const SimConfig = {
     foodDeposit: 0.85,
   },
   ant: {
-    energyDrainPerTick: 0.0001,
+    energyDrainPerTick: 0.00005,
     digEnergyCost: 0.005,
     foodEnergyGain: 0.3,
     nestEnergyGain: 0.5,
+    /** Food taken from nest stores when a hungry searcher rests on the mound. */
+    nestSip: 0.02,
+    /** Energy restored per unit of nest food sipped. */
+    nestSipEnergy: 5,
     /** Drop cargo and search again if the nest hasn't been found. */
     giveUpReturnTicks: 1800,
   },
-    colony: {
+  colony: {
     maxAnts: 120,
     spawnIntervalTicks: 50,
     initialAnts: 40,
+    /** Nest food spent to hatch one ant. No free hatches. */
+    spawnCost: 0.25,
+    /** Granary must hold this much before a hatch, so stores are visible. */
+    spawnMinStore: 0.5,
   },
   fireAnt: {
     /** Same-cell bump: aggressive but not an instant wipe. */

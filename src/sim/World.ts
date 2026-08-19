@@ -30,6 +30,9 @@ export class World {
 
   nestFoodStore = 0;
   fireNestFoodStore = 0;
+  /** Cumulative harvester deliveries; never spent. Eval uses this, not the granary. */
+  foodDelivered = 0;
+  fireFoodDelivered = 0;
   tickCount = 0;
   readonly rng: Rng;
   /** Starting food mass, set by eval/scenes so delivery % is meaningful. */
@@ -69,6 +72,8 @@ export class World {
     this.fireFoodField.clear();
     this.nestFoodStore = 0;
     this.fireNestFoodStore = 0;
+    this.foodDelivered = 0;
+    this.fireFoodDelivered = 0;
     this.tickCount = 0;
     this.initialFoodMass = 0;
   }
