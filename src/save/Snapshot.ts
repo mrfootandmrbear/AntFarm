@@ -35,6 +35,9 @@ export interface AntSnapshot {
   digCooldown: number;
   returnTicks: number;
   prey: boolean;
+  /** Holding a pellet of excavated soil. Absent in pre-mound saves. */
+  soil?: boolean;
+  soilTicks?: number;
   /** Cumulative turn for lost-ant recovery; absent in pre-abort-trip saves. */
   cumulativeTurn?: number;
   /** This ant's own Rng state; absent in pre-per-ant-seeding saves. */
@@ -170,6 +173,8 @@ export function captureSnapshot(engine: SimulationEngine): WorldSnapshot {
       digCooldown: ant.digCooldown,
       returnTicks: ant.returnTicks,
       prey: ant.prey,
+      soil: ant.soil,
+      soilTicks: ant.soilTicks,
       rngState: ant.rng.getState(),
       cumulativeTurn: ant.cumulativeTurn,
     });
@@ -280,6 +285,8 @@ export function applySnapshot(engine: SimulationEngine, snap: WorldSnapshot): vo
     ant.digCooldown = a.digCooldown;
     ant.returnTicks = a.returnTicks;
     ant.prey = a.prey ?? true;
+    ant.soil = a.soil ?? false;
+    ant.soilTicks = a.soilTicks ?? 0;
     ant.alive = true;
     if (a.rngState !== undefined) ant.rng.setState(a.rngState);
     ant.cumulativeTurn = a.cumulativeTurn ?? 0;

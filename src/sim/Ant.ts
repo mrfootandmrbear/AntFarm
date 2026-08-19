@@ -43,6 +43,10 @@ export class Ant {
   stuckTimer = 0;
   digCooldown = 0;
   returnTicks = 0;
+  /** Holding a pellet of excavated soil, on its way to the surface. */
+  soil = false;
+  /** Ticks the current pellet has been held — a pellet carried too long is scattered. */
+  soilTicks = 0;
   /** This ant's own Rng stream — independent of the world's, per AntGame's per-ant seeding. */
   rng: Rng;
   /** Sum of turning (in eighth-turns) since the last pickup/delivery — a lost-ant signal. */
@@ -92,6 +96,8 @@ export class Ant {
       return;
     }
 
+    if (this.soil) this.carrySoil(world);
+
     if (this.state === AntState.SEARCHING) {
       this.search(world);
     } else {
@@ -105,6 +111,7 @@ export class Ant {
 
     if (world.cells[i] === this.nestCell) {
       this.restAtNest(world);
+      this.excavateBelow();
     }
 
     if (world.cells[i] === Cell.FOOD && world.foodAmount[i] > 0.05) {
@@ -213,6 +220,7 @@ export class Ant {
       const digY = this.y + d.dy;
       if (world.isDiggable(digX, digY)) {
         world.dig(digX, digY);
+        this.takeSoil();
         this.x = digX;
         this.y = digY;
         this.energy -= SimConfig.ant.digEnergyCost;
@@ -243,6 +251,80 @@ export class Ant {
     this.moveTo(last.nx, last.ny, last.idx);
   }
 
+  /**
+   * Standing on the mound, dig a little further down and surface with a pellet.
+   *
+   * Surface digging alone cannot build a mound — the neighbourhood runs out of
+   * dirt. There is no bottom to the earth below the nest, so this is what keeps
+   * the pile growing as long as there are ants to work it.
+   */
+  private excavateBelow(): void {
+    if (this.carrying || this.soil) return;
+    const cfg = SimConfig.mound;
+    const chance =
+      this.kind === AntKind.FIRE ? cfg.fireExcavateChance : cfg.harvesterExcavateChance;
+    if (!this.rng.chance(chance)) return;
+    this.energy -= SimConfig.ant.digEnergyCost;
+    this.takeSoil();
+  }
+
+  /**
+   * Take on a pellet of spoil from a cell just excavated. An ant with its jaws
+   * full of food has nowhere to put it, so those digs produce no pellet.
+   */
+  private takeSoil(): void {
+    if (this.carrying || this.soil) return;
+    this.soil = true;
+    this.soilTicks = 0;
+  }
+
+  /**
+   * Move the held pellet one tick closer to being part of the mound.
+   *
+   * Fire ants dump theirs straight onto the mound, weighted toward the crown, so
+   * the pile grows into a dome as it settles. Harvesters walk theirs out to the
+   * rim of the clearing and scrape the disk they crossed flat on the way.
+   */
+  private carrySoil(world: World): void {
+    const cfg = SimConfig.mound;
+    this.soilTicks++;
+
+    const dx = this.x - this.nestX;
+    const dy = this.y - this.nestY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const fire = this.kind === AntKind.FIRE;
+    const range = fire ? cfg.fireMoundRadius : cfg.harvesterDiskRadius + 1;
+
+    if (dist > range) {
+      // Still out in the field. Past a point the ant gives up on the trip home
+      // and just scatters the pellet, leaving a faint spoil bump where it dug.
+      if (this.soilTicks < cfg.soilCarryTicks) return;
+      const base = fire ? cfg.fireDeposit : cfg.harvesterDeposit;
+      world.dropSoil(this.x, this.y, base * cfg.spoilFraction);
+      this.soil = false;
+      this.soilTicks = 0;
+      return;
+    }
+
+    if (fire) {
+      const falloff = 1 - dist / (cfg.fireMoundRadius + 1);
+      world.dropSoil(this.x, this.y, cfg.fireDeposit * falloff);
+    } else {
+      if (dist > 0.5) {
+        const scale = cfg.harvesterDiskRadius / dist;
+        const rx = Math.round(this.nestX + dx * scale);
+        const ry = Math.round(this.nestY + dy * scale);
+        if (world.heightAt(rx, ry) < cfg.harvesterRimMax) {
+          world.dropSoil(rx, ry, cfg.harvesterDeposit);
+        }
+      }
+      const here = world.heightAt(this.x, this.y);
+      if (here > 0) world.raiseHeight(this.x, this.y, -Math.min(here, cfg.harvesterClear));
+    }
+    this.soil = false;
+    this.soilTicks = 0;
+  }
+
   /** Hungry searchers eat from the granary. Empty stores mean they keep starving. */
   private restAtNest(world: World): void {
     if (this.energy >= 0.55) return;
@@ -265,6 +347,7 @@ export class Ant {
       const digY = this.y + d.dy;
       if (world.isDiggable(digX, digY)) {
         world.dig(digX, digY);
+        this.takeSoil();
         this.x = digX;
         this.y = digY;
         this.energy -= SimConfig.ant.digEnergyCost;

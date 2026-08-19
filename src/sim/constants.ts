@@ -120,10 +120,53 @@ export const SimConfig = {
      * Uphill weight penalty. A candidate cell `dh` higher than the ant's own is
      * weighted by `1 / (1 + uphillCost * dh)` — exactly 1 on flat ground, so a
      * world with no relief behaves bit-for-bit like one with no height at all.
+     *
+     * At the angle of repose below, the steepest slope a pile can hold, this is
+     * a 0.79x penalty. Relief nudges traffic around a mound; it is not a wall,
+     * and an ant can always climb its own nest.
      */
-    uphillCost: 6,
-    /** Downhill weight bonus: `1 + downhillGain * -dh`. Ants like rolling down. */
-    downhillGain: 2.5,
+    uphillCost: 3,
+    /** Downhill weight bonus: `1 + downhillGain * -dh`. Ants drift downslope. */
+    downhillGain: 1,
+    /** Loose soil slumps every N ticks — the mound settles instead of spiking. */
+    slumpIntervalTicks: 12,
+    /** Slope a pile holds without sliding (height units per cell). */
+    angleOfRepose: 0.09,
+    /** Fraction of the excess above the repose slope that moves per slump step. */
+    slumpRate: 0.22,
+  },
+  /**
+   * Excavated soil coming back to the surface.
+   *
+   * Fire ants pelletize spoil and dump it on the mound, so digging below is
+   * literally what raises the ground above — a colony that keeps expanding keeps
+   * building. Harvesters carry spoil out to the edge of their clearing instead,
+   * which is why their nests read as a flat disk with a low rim and no mound.
+   */
+  mound: {
+    /**
+     * Chance per tick that an ant standing on its own mound turns around and
+     * excavates below it, coming back up with a pellet. This is the colony's
+     * real soil supply — surface digging runs out once the neighbourhood is
+     * hollow, but there is always more earth underneath. Fire ants are the
+     * aggressive diggers of the two.
+     */
+    fireExcavateChance: 0.08,
+    harvesterExcavateChance: 0.03,
+    /** Height one fire-ant pellet adds at the crown of the mound. */
+    fireDeposit: 0.15,
+    /** Pellets landing beyond this range from the nest are not mound-building. */
+    fireMoundRadius: 8,
+    /** Harvester rim deposit — deliberately smaller, and capped low. */
+    harvesterDeposit: 0.02,
+    harvesterDiskRadius: 5,
+    harvesterRimMax: 0.16,
+    /** Height a harvester scrapes off the cell it stands on, keeping the disk flat. */
+    harvesterClear: 0.01,
+    /** A pellet still held after this long is scattered where the ant stands. */
+    soilCarryTicks: 900,
+    /** How much of a proper deposit that scattered spoil is worth. */
+    spoilFraction: 0.12,
   },
   world: {
     diffuseIntervalTicks: 2,

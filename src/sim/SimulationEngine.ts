@@ -42,6 +42,10 @@ export class SimulationEngine {
       this.spawnFireAnts();
     }
 
+    if (world.tickCount % SimConfig.terrain.slumpIntervalTicks === 0) {
+      world.settleHeight();
+    }
+
     if (world.tickCount % cfg.diffuseIntervalTicks === 0) {
       world.homeField.diffuse(world.blocked);
       world.foodField.diffuse(world.blocked);

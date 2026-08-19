@@ -23,6 +23,8 @@ export class World {
   heightMap: Float32Array;
   /** True once any cell has been raised or lowered — lets flat worlds skip work. */
   hasRelief = false;
+  /** Scratch buffer for {@link settleHeight}, allocated on first use. */
+  private heightDelta: Float32Array | null = null;
 
   /** Trail back toward the nest (laid by searching ants). */
   readonly homeField: DiffusingField;
@@ -172,6 +174,72 @@ export class World {
     this.heightMap[i] = after;
     this.hasRelief = true;
     return after - before;
+  }
+
+  /**
+   * One settling step for loose soil: any cell standing more than the angle of
+   * repose above its lowest neighbour sheds part of the excess into it.
+   *
+   * This is what turns a stream of pellets dropped near a nest entrance into a
+   * dome. Deltas are accumulated first and applied after, so the result does not
+   * depend on which corner of the grid the scan started from.
+   */
+  settleHeight(): void {
+    if (!this.hasRelief) return;
+    const cfg = SimConfig.terrain;
+    const w = this.width;
+    const h = this.height;
+    const height = this.heightMap;
+    if (!this.heightDelta) this.heightDelta = new Float32Array(height.length);
+    const delta = this.heightDelta;
+    delta.fill(0);
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const here = height[i];
+        let lowest = here;
+        let lowestIdx = -1;
+        for (let d = 0; d < 4; d++) {
+          const nx = x + DIR4[d].dx;
+          const ny = y + DIR4[d].dy;
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const ni = ny * w + nx;
+          if (height[ni] < lowest) {
+            lowest = height[ni];
+            lowestIdx = ni;
+          }
+        }
+        if (lowestIdx < 0) continue;
+        const excess = here - lowest - cfg.angleOfRepose;
+        if (excess <= 0) continue;
+        const moved = excess * cfg.slumpRate * 0.5;
+        delta[i] -= moved;
+        delta[lowestIdx] += moved;
+      }
+    }
+
+    const max = cfg.maxHeight;
+    const min = cfg.minHeight;
+    for (let i = 0; i < height.length; i++) {
+      if (delta[i] === 0) continue;
+      const v = height[i] + delta[i];
+      height[i] = v > max ? max : v < min ? min : v;
+    }
+  }
+
+  /**
+   * Drop a pellet of soil. A pellet is loose, not a brick: most of it lands on
+   * the target cell and the rest spills into the four neighbours, so a stream of
+   * deposits builds a slope rather than a tower of one-cell spikes that ants
+   * then have to climb between slump steps.
+   */
+  dropSoil(x: number, y: number, amount: number): void {
+    if (amount === 0) return;
+    this.raiseHeight(x, y, amount * 0.6);
+    for (let d = 0; d < 4; d++) {
+      this.raiseHeight(x + DIR4[d].dx, y + DIR4[d].dy, amount * 0.1);
+    }
   }
 
   isPassable(x: number, y: number): boolean {

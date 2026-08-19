@@ -220,7 +220,7 @@ export class PixiRenderer {
           let slope = (dhx + dhy) * 3.4;
           if (slope > 0.34) slope = 0.34;
           else if (slope < -0.34) slope = -0.34;
-          const lit = 1 + hHere * 0.2 + slope;
+          const lit = 1 + hHere * 0.32 + slope;
           r *= lit;
           g *= lit;
           b *= lit;
