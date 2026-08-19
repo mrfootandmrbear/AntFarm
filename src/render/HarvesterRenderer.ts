@@ -12,6 +12,8 @@ export class HarvesterRenderer extends AntSpeciesRenderer {
     tint: 0xffffff,
     fallbackTint: 0x1e140f,
     fallbackCarryTint: 0xdca028,
+    fallbackSoilTint: 0x9a7038,
+    soilTint: 0xc8a870,
   };
 
   protected owns(ant: Ant): boolean {

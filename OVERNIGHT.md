@@ -15,6 +15,7 @@ Look work may start only after CORE PASS. KEEP a param change only if ADAPTATION
 - RELOCATE (E07): PASS
 - FIRE / LIZARD / MULTI / CHOKE / SOAK: PASS on {1842,7,99,1,42}
 - Look: vapor on by default, top-down walk/carry from Deposit, Scent/Erase/transport copy
+- Phase 5: species-specific nest architectures — fire dome vs harvester disk (E_ARCH)
 - Persistence: localStorage save/load, auto-save every 500 ticks
 - CI: GitHub Actions runs typecheck + eval on every push to main
 - Consecutive regressions: 0
@@ -296,6 +297,25 @@ KEEP
 New question:
 Can harvesters ever win a contested pile, or does bumpKillChance 0.22
 make the outcome a foregone conclusion the moment two colonies meet?
+
+### Phase 5 — species-specific nest architectures
+
+Trail formation: PASS (seed 1842 unchanged)
+Wall adaptation: PASS
+Old-trail decay: 82.9%
+
+Changed:
+E_ARCH headless gate — 30k ticks, 60 ants each, isolated colonies
+soil-pellet carry pose (carry frames + warm soil tint when `ant.soil`)
+default scene: twin nests (harvester west, fire east) with split colony
+
+Observation:
+Fire crown peaks ~0.45–0.50 with a tapering skirt; harvester centre
+stays ≤0.02 with a ~0.08–0.14 rim band. Architectures diverge on
+first load without player sculpting.
+
+Decision:
+KEEP
 
 ## Template
 

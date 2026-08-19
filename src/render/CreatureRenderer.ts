@@ -53,6 +53,10 @@ export interface AntSpecies {
   /** Tints for the drawn-shape fallback, which has no art to keep. */
   fallbackTint: number;
   fallbackCarryTint: number;
+  /** Brown tint when hauling an excavated soil pellet. */
+  fallbackSoilTint: number;
+  /** Multiply walk/carry art by this when hauling spoil. */
+  soilTint: number;
 }
 
 /**
@@ -109,17 +113,24 @@ export abstract class AntSpeciesRenderer {
       if (this.usingFallback) {
         sprite.rotation = DIR_ANGLES[ant.dir];
         sprite.scale.set(1);
-        sprite.tint = ant.carrying ? this.species.fallbackCarryTint : this.species.fallbackTint;
+        sprite.tint = ant.carrying
+          ? this.species.fallbackCarryTint
+          : ant.soil
+            ? this.species.fallbackSoilTint
+            : this.species.fallbackTint;
         continue;
       }
 
       // The art faces up; headings are measured from the +x axis.
       sprite.rotation = DIR_ANGLES[ant.dir] + Math.PI / 2;
       sprite.scale.set(scale);
-      sprite.tint = this.species.tint;
+      const haulingSoil = ant.soil && !ant.carrying;
+      sprite.tint = haulingSoil ? this.species.soilTint : this.species.tint;
       // Offset by position so a column of ants does not march in lockstep.
-      const frame = (tick + ant.x * 3 + ant.y) % (ant.carrying ? carryN : walkN);
-      sprite.texture = ant.carrying ? this.carry[frame] : this.walk[frame];
+      const frame =
+        (tick + ant.x * 3 + ant.y) %
+        (ant.carrying || haulingSoil ? carryN : walkN);
+      sprite.texture = ant.carrying || haulingSoil ? this.carry[frame] : this.walk[frame];
     }
     this.pool.end();
   }
