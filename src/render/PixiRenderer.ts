@@ -6,7 +6,7 @@ import {
   Sprite,
   Texture,
 } from 'pixi.js';
-import { Cell } from '../sim/constants';
+import { Cell, Layer, SimConfig, Under } from '../sim/constants';
 import type { SimulationEngine } from '../sim/SimulationEngine';
 import type { World } from '../sim/World';
 import { FireAntRenderer } from './FireAntRenderer';
@@ -27,6 +27,12 @@ export class PixiRenderer {
   /** Soft vapor overlay. Player-facing name is "Scent". */
   showPheromones = true;
 
+  /**
+   * Museum cross-section: the surface peeled away to show the nest below.
+   * Same scene, same camera — not a separate mode/screen.
+   */
+  showUnderground = false;
+
   private terrainBuf!: Uint8Array;
   private terrainSource!: BufferImageSource;
   private terrainSprite!: Sprite;
@@ -34,6 +40,10 @@ export class PixiRenderer {
   private vaporBuf!: Uint8Array;
   private vaporSource!: BufferImageSource;
   private vaporSprite!: Sprite;
+
+  private undergroundBuf!: Uint8Array;
+  private undergroundSource!: BufferImageSource;
+  private undergroundSprite!: Sprite;
 
   private sceneryContainer!: Container;
   private readonly harvesters = new HarvesterRenderer();
@@ -92,6 +102,19 @@ export class PixiRenderer {
     this.vaporSprite.blendMode = 'normal';
     this.app.stage.addChild(this.vaporSprite);
 
+    this.undergroundBuf = new Uint8Array(w * h * 4);
+    this.undergroundSource = new BufferImageSource({
+      resource: this.undergroundBuf,
+      width: w,
+      height: h,
+      format: 'rgba8unorm',
+    });
+    this.undergroundSource.scaleMode = 'nearest';
+    this.undergroundSprite = new Sprite(new Texture({ source: this.undergroundSource }));
+    this.undergroundSprite.scale.set(cellSize);
+    this.undergroundSprite.visible = false;
+    this.app.stage.addChild(this.undergroundSprite);
+
     this.sceneryContainer = new Container();
     this.app.stage.addChild(this.sceneryContainer);
 
@@ -128,12 +151,26 @@ export class PixiRenderer {
 
   render(engine: SimulationEngine): void {
     const tick = engine.world.tickCount;
-    this.updateTerrain();
-    this.updateVapor();
-    this.updateScenery();
-    this.harvesters.update(engine.ants, tick, this.cellSize);
-    this.fireAnts.update(engine.ants, tick, this.cellSize);
-    this.lizards.update(engine.lizards, tick, this.cellSize);
+    const under = this.showUnderground;
+
+    this.terrainSprite.visible = !under;
+    this.vaporSprite.visible = !under && this.showPheromones;
+    this.sceneryContainer.visible = !under;
+    this.undergroundSprite.visible = under;
+    this.lizards.container.visible = !under;
+
+    if (under) {
+      this.updateUnderground();
+    } else {
+      this.updateTerrain();
+      this.updateVapor();
+      this.updateScenery();
+    }
+
+    const layer = under ? Layer.UNDERGROUND : Layer.SURFACE;
+    this.harvesters.update(engine.ants, tick, this.cellSize, layer);
+    this.fireAnts.update(engine.ants, tick, this.cellSize, layer);
+    if (!under) this.lizards.update(engine.lizards, tick, this.cellSize);
   }
 
   invalidateScenery(): void {
@@ -235,6 +272,73 @@ export class PixiRenderer {
     }
 
     this.terrainSource.update();
+  }
+
+  /**
+   * The cross-section: solid earth cut away to void, colored by which colony
+   * cut it and how deep it runs. A plan view, not a side view — depth reads
+   * as darkening, not as vertical position.
+   */
+  private updateUnderground(): void {
+    const world = this.world;
+    const w = world.width;
+    const h = world.height;
+    const under = world.underground;
+    const depth = world.tunnelDepth;
+    const owner = world.tunnelOwner;
+    const noiseArr = this.cellNoise;
+    const buf = this.undergroundBuf;
+    const maxDepth = SimConfig.underground.maxDepth;
+
+    for (let i = 0; i < w * h; i++) {
+      const noise = noiseArr[i];
+      const kind = under[i];
+      let r: number;
+      let g: number;
+      let b: number;
+
+      if (kind === Under.SOLID) {
+        // Cut-away earth: darker and flatter than the surface dirt tone, so
+        // the peeled-back look reads as a different material, not a filter.
+        r = 66 + noise * 0.3;
+        g = 50 + noise * 0.25;
+        b = 36 + noise * 0.18;
+      } else if (kind === Under.ENTRANCE) {
+        // A doorway stays bright regardless of depth — it is always at 0.
+        r = 168 + noise * 0.3;
+        g = 128 + noise * 0.25;
+        b = 74 + noise * 0.2;
+      } else {
+        const dz = Math.min(1, depth[i] / maxDepth);
+        const shade = 1 - dz * 0.6;
+        if (owner[i] === 2) {
+          // Fire ant works: small, dense, irregular — a warm dark void.
+          const chamber = kind === Under.CHAMBER ? 1.35 : 1;
+          r = (58 + noise * 0.5) * shade * chamber;
+          g = (22 + noise * 0.2) * shade * chamber;
+          b = (16 + noise * 0.15) * shade * chamber;
+        } else {
+          // Harvester works: large, rounded, lit like a museum case — brood
+          // chambers read brighter and warmer than the plain shaft.
+          const chamber = kind === Under.CHAMBER ? 1.7 : 1;
+          r = (52 + noise * 0.4) * shade * chamber;
+          g = (60 + noise * 0.4) * shade * chamber;
+          b = (58 + noise * 0.3) * shade;
+          if (kind === Under.CHAMBER) {
+            g += 14;
+            r += 6;
+          }
+        }
+      }
+
+      const p = i << 2;
+      buf[p] = r < 0 ? 0 : r > 255 ? 255 : r;
+      buf[p + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+      buf[p + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+      buf[p + 3] = 255;
+    }
+
+    this.undergroundSource.update();
   }
 
   private updateVapor(): void {

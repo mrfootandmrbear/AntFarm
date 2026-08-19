@@ -1,5 +1,5 @@
 import { Container, Sprite, Texture } from 'pixi.js';
-import { DIR_ANGLES } from '../sim/constants';
+import { DIR_ANGLES, Layer, type LayerType } from '../sim/constants';
 import type { Ant } from '../sim/Ant';
 import { loadFrames } from './textures';
 
@@ -90,8 +90,12 @@ export abstract class AntSpeciesRenderer {
     return [];
   }
 
-  /** Draw every live ant this renderer owns. `ants` may hold other species. */
-  update(ants: readonly Ant[], tick: number, cellSize: number): void {
+  /**
+   * Draw every live ant this renderer owns on the given layer. `ants` may hold
+   * other species and the other layer — surface and underground ants never
+   * share a frame, per {@link Layer}.
+   */
+  update(ants: readonly Ant[], tick: number, cellSize: number, layer: LayerType = Layer.SURFACE): void {
     const half = cellSize / 2;
     const scale = this.usingFallback
       ? 1
@@ -101,7 +105,7 @@ export abstract class AntSpeciesRenderer {
 
     this.pool.begin();
     for (const ant of ants) {
-      if (!ant.alive || !this.owns(ant)) continue;
+      if (!ant.alive || ant.layer !== layer || !this.owns(ant)) continue;
       const sprite = this.pool.next(this.walk[0]);
       sprite.x = ant.x * cellSize + half;
       sprite.y = ant.y * cellSize + half;

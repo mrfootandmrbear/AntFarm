@@ -50,6 +50,7 @@ export class UI {
 
   private pauseBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
+  private undergroundBtn!: HTMLButtonElement;
   private saveFlashTimer = 0;
   private readoutEl!: HTMLElement;
   private brushPreview!: HTMLElement;
@@ -199,6 +200,13 @@ export class UI {
     this.pauseBtn.classList.toggle('active', this.paused);
   }
 
+  private toggleUnderground(btn: HTMLButtonElement = this.undergroundBtn): void {
+    const r = this.renderer;
+    r.showUnderground = !r.showUnderground;
+    btn.textContent = r.showUnderground ? 'Dig view: On' : 'Dig view: Off';
+    btn.classList.toggle('active', r.showUnderground);
+  }
+
   // ---------- Readout (top-right stats) ----------
   private buildReadout(): void {
     this.readoutEl = document.getElementById('readout')!;
@@ -230,6 +238,15 @@ export class UI {
       trailBtn.classList.toggle('active', r.showPheromones);
     });
     viewGroup.appendChild(trailBtn);
+
+    const undergroundBtn = document.createElement('button');
+    undergroundBtn.className = 'btn';
+    undergroundBtn.textContent = this.renderer.showUnderground ? 'Dig view: On' : 'Dig view: Off';
+    if (this.renderer.showUnderground) undergroundBtn.classList.add('active');
+    undergroundBtn.addEventListener('click', () => this.toggleUnderground(undergroundBtn));
+    this.undergroundBtn = undergroundBtn;
+    viewGroup.appendChild(undergroundBtn);
+
     bar.appendChild(viewGroup);
 
     const actionGroup = el('div', 'bar-group');
@@ -391,6 +408,10 @@ export class UI {
       if (e.key === ' ') {
         e.preventDefault();
         this.togglePause();
+        return;
+      }
+      if (e.key.toLowerCase() === 'u') {
+        this.toggleUnderground();
       }
     });
   }
