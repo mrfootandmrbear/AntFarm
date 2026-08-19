@@ -4,7 +4,7 @@
  * Do not optimize for fastest food delivery. Optimize for legible emergence.
  * A conveyor-belt lock-in or an immortal trail is a failed run.
  */
-import { Cell } from '../sim/constants';
+import { AntKind, Cell } from '../sim/constants';
 import { SimulationEngine } from '../sim/SimulationEngine';
 
 const W = 120;
@@ -36,6 +36,8 @@ export interface EvalReport {
   memory: KindResult;
   pulse?: PulseResult;
   relocation?: RelocationResult;
+  rivalry?: RivalryResult;
+  predation?: PredationResult;
 }
 
 export interface PulseResult {
@@ -54,6 +56,29 @@ export interface RelocationResult {
   newDeliveryTicks: number | null;
   oldCorridorAfter: number;
   newCorridorAfter: number;
+}
+
+export interface RivalryResult {
+  pass: boolean;
+  notes: string[];
+  /** Mean harvesters / fire ants within the pile's neighborhood, late in the run. */
+  harvestersAtPile: number;
+  fireAtPile: number;
+  controlHarvestersAtPile: number;
+  harvestersAlive: number;
+  fireAlive: number;
+  controlHarvestersAlive: number;
+  harvesterDelivered: number;
+  fireDelivered: number;
+}
+
+export interface PredationResult {
+  pass: boolean;
+  notes: string[];
+  startAnts: number;
+  huntedAnts: number;
+  controlAnts: number;
+  lizardsAlive: number;
 }
 
 function makeEngine(seed: number): SimulationEngine {
@@ -329,6 +354,155 @@ export function runRelocation(seed = DEFAULT_SEED): RelocationResult {
   return { pass, notes, newDeliveryTicks, oldCorridorAfter, newCorridorAfter };
 }
 
+/**
+ * E_FIRE: one pile between a harvester mound and a fire mound.
+ *
+ * Fire ants should end up holding contested food. A control run without the
+ * fire colony is the reference — otherwise a scenario where harvesters simply
+ * starve would look like a win for the raiders.
+ */
+export function runFireRivalry(seed = DEFAULT_SEED): RivalryResult {
+  const notes: string[] = [];
+  const pile = { x: 60, y: 40 };
+  const harvNest = { x: 24, y: 40 };
+  const fireNest = { x: 96, y: 40 };
+  const perColony = 60;
+  const horizon = 2000;
+  const pileRadius = 8;
+
+  function build(withFire: boolean): SimulationEngine {
+    const e = new SimulationEngine(W, H, seed);
+    e.allowSpawn = false;
+    e.allowWater = false;
+    e.fillDisk(harvNest.x, harvNest.y, 3, Cell.NEST);
+    if (withFire) e.fillDisk(fireNest.x, fireNest.y, 3, Cell.FIRE_NEST);
+    e.fillDisk(pile.x, pile.y, 5, Cell.FOOD);
+    e.spawnAntsNear(harvNest.x, harvNest.y, perColony);
+    if (withFire) e.spawnAntsNear(fireNest.x, fireNest.y, perColony, AntKind.FIRE);
+    e.world.initialFoodMass = e.world.totalFoodMass();
+    return e;
+  }
+
+  function atPile(e: SimulationEngine, kind: number): number {
+    let n = 0;
+    for (const a of e.ants) {
+      if (!a.alive || a.kind !== kind) continue;
+      if (Math.max(Math.abs(a.x - pile.x), Math.abs(a.y - pile.y)) <= pileRadius) n++;
+    }
+    return n;
+  }
+
+  /** Mean occupancy over the last 30% of the run, once the contest has settled. */
+  function occupancy(e: SimulationEngine): { harv: number; fire: number } {
+    const lateStart = Math.floor(horizon * 0.7);
+    let harv = 0;
+    let fire = 0;
+    let samples = 0;
+    while (e.world.tickCount < horizon) {
+      e.tick();
+      const t = e.world.tickCount;
+      if (t % 10 !== 0 || t < lateStart) continue;
+      harv += atPile(e, AntKind.HARVESTER);
+      fire += atPile(e, AntKind.FIRE);
+      samples++;
+    }
+    const n = Math.max(1, samples);
+    return { harv: harv / n, fire: fire / n };
+  }
+
+  const contested = build(true);
+  const contestedOcc = occupancy(contested);
+  const control = build(false);
+  const controlOcc = occupancy(control);
+
+  const fireAlive = contested.fireAliveCount();
+  const harvestersAlive = contested.aliveCount() - fireAlive;
+  const controlHarvestersAlive = control.aliveCount();
+  const harvesterLosses = perColony - harvestersAlive;
+  const fireLosses = perColony - fireAlive;
+
+  if (contestedOcc.fire < contestedOcc.harv * 1.5) {
+    notes.push(
+      `fire ants did not take the pile (${contestedOcc.fire.toFixed(2)} vs ${contestedOcc.harv.toFixed(2)})`,
+    );
+  }
+  if (harvestersAlive > controlHarvestersAlive * 0.6) {
+    notes.push(
+      `harvesters barely paid for the contest (${harvestersAlive} vs ${controlHarvestersAlive} uncontested)`,
+    );
+  }
+  if (fireLosses >= harvesterLosses) {
+    notes.push(`raid cost the raiders more (${fireLosses} fire vs ${harvesterLosses} harvester)`);
+  }
+
+  const pass =
+    contestedOcc.fire >= contestedOcc.harv * 1.5 &&
+    harvestersAlive <= controlHarvestersAlive * 0.6 &&
+    fireLosses < harvesterLosses;
+  if (pass) notes.push('fire ants displaced harvesters from the shared pile');
+
+  return {
+    pass,
+    notes,
+    harvestersAtPile: contestedOcc.harv,
+    fireAtPile: contestedOcc.fire,
+    controlHarvestersAtPile: controlOcc.harv,
+    harvestersAlive,
+    fireAlive,
+    controlHarvestersAlive,
+    harvesterDelivered: contested.world.foodDelivered,
+    fireDelivered: contested.world.fireFoodDelivered,
+  };
+}
+
+/**
+ * E_LIZARD: a colony with a horned lizard loose in it should shrink.
+ *
+ * Paired with a lizard-free control so the drop has to be predation rather than
+ * the colony quietly starving.
+ */
+export function runLizardPredation(seed = DEFAULT_SEED): PredationResult {
+  const notes: string[] = [];
+  const ants = 80;
+  const horizon = 6000;
+
+  function build(withLizard: boolean): SimulationEngine {
+    const e = new SimulationEngine(W, H, seed);
+    e.allowSpawn = false;
+    e.allowWater = false;
+    e.fillDisk(NEST.x, NEST.y, 3, Cell.NEST);
+    e.fillDisk(FOOD.x, FOOD.y, 4, Cell.FOOD);
+    e.spawnAntsNear(NEST.x, NEST.y, ants);
+    if (withLizard) e.spawnLizardAt(Math.floor((NEST.x + FOOD.x) / 2), NEST.y);
+    e.world.initialFoodMass = e.world.totalFoodMass();
+    return e;
+  }
+
+  const hunted = build(true);
+  while (hunted.world.tickCount < horizon) hunted.tick();
+  const control = build(false);
+  while (control.world.tickCount < horizon) control.tick();
+
+  const startAnts = ants;
+  const huntedAnts = hunted.aliveCount();
+  const controlAnts = control.aliveCount();
+  const lizardsAlive = hunted.lizardCount();
+
+  if (huntedAnts > startAnts * 0.75) {
+    notes.push(`colony barely shrank with a lizard in it (${huntedAnts}/${startAnts})`);
+  }
+  if (controlAnts < startAnts * 0.9) {
+    notes.push(`control colony shrank on its own (${controlAnts}/${startAnts}) — not predation`);
+  }
+  if (lizardsAlive < 1) notes.push('lizard died before the horizon');
+
+  const pass =
+    huntedAnts <= startAnts * 0.75 && controlAnts >= startAnts * 0.9 && lizardsAlive >= 1;
+  if (pass) notes.push('lizard ate its way through the colony; control held steady');
+
+  return { pass, notes, startAnts, huntedAnts, controlAnts, lizardsAlive };
+}
+
 export function formatReport(r: EvalReport): string {
   const yn = (p: boolean) => (p ? 'PASS' : 'FAIL');
   return [
@@ -352,6 +526,12 @@ export function formatReport(r: EvalReport): string {
     r.relocation
       ? `RELOCATE: ${yn(r.relocation.pass)} — new delivery ${r.relocation.newDeliveryTicks ?? 'never'} ticks; corridors old ${r.relocation.oldCorridorAfter.toFixed(0)} / new ${r.relocation.newCorridorAfter.toFixed(0)}${r.relocation.notes.length ? ' — ' + r.relocation.notes.join('; ') : ''}`
       : '',
+    r.rivalry
+      ? `FIRE: ${yn(r.rivalry.pass)} — pile fire ${r.rivalry.fireAtPile.toFixed(2)} / harvester ${r.rivalry.harvestersAtPile.toFixed(2)} (uncontested ${r.rivalry.controlHarvestersAtPile.toFixed(2)}); survivors ${r.rivalry.harvestersAlive} harvester + ${r.rivalry.fireAlive} fire vs ${r.rivalry.controlHarvestersAlive} uncontested${r.rivalry.notes.length ? ' — ' + r.rivalry.notes.join('; ') : ''}`
+      : '',
+    r.predation
+      ? `LIZARD: ${yn(r.predation.pass)} — ${r.predation.startAnts} ants → ${r.predation.huntedAnts} hunted / ${r.predation.controlAnts} unhunted; ${r.predation.lizardsAlive} lizard${r.predation.lizardsAlive === 1 ? '' : 's'} left${r.predation.notes.length ? ' — ' + r.predation.notes.join('; ') : ''}`
+      : '',
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -364,6 +544,8 @@ if (isMain) {
   const report = runEval(seed);
   report.pulse = runPulse(seed);
   report.relocation = runRelocation(seed);
+  report.rivalry = runFireRivalry(seed);
+  report.predation = runLizardPredation(seed);
   console.log(formatReport(report));
   process.exit(report.core.pass ? 0 : 1);
 }

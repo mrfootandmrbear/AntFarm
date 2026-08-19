@@ -157,13 +157,18 @@ export class SimulationEngine {
     return true;
   }
 
-  spawnAntsNear(x: number, y: number, count: number): number {
+  spawnAntsNear(
+    x: number,
+    y: number,
+    count: number,
+    kind: AntKindType = AntKind.HARVESTER,
+  ): number {
     let n = 0;
     const rng = this.world.rng;
     for (let i = 0; i < count; i++) {
       const ax = x + rng.int(9) - 4;
       const ay = y + rng.int(9) - 4;
-      if (this.spawnAntAt(ax, ay)) n++;
+      if (this.spawnAntAt(ax, ay, kind)) n++;
     }
     return n;
   }
