@@ -10,12 +10,13 @@ import { loadFrames } from './textures';
  * the GPU. Instead the pool grows to the high-water mark and hides the tail.
  */
 export class SpritePool {
-  readonly container = new Container();
   private sprites: Sprite[] = [];
   private used = 0;
 
+  constructor(readonly container: Container) {}
+
   /** Take the next sprite, creating it on first use. */
-  next(initial: Texture): Sprite {
+  next(initial: Texture, depth = 0): Sprite {
     let sprite = this.sprites[this.used];
     if (!sprite) {
       sprite = new Sprite(initial);
@@ -24,6 +25,7 @@ export class SpritePool {
       this.sprites[this.used] = sprite;
     }
     sprite.visible = true;
+    sprite.zIndex = depth;
     this.used++;
     return sprite;
   }
@@ -67,14 +69,14 @@ export interface AntSpecies {
 export abstract class AntSpeciesRenderer {
   protected abstract readonly species: AntSpecies;
 
-  private readonly pool = new SpritePool();
+  private pool!: SpritePool;
   private walk: Texture[] = [];
   private carry: Texture[] = [];
   private fallback!: Texture;
   private usingFallback = false;
 
-  get container(): Container {
-    return this.pool.container;
+  initLayer(layer: Container): void {
+    this.pool = new SpritePool(layer);
   }
 
   async init(fallback: Texture): Promise<void> {
@@ -106,7 +108,7 @@ export abstract class AntSpeciesRenderer {
     this.pool.begin();
     for (const ant of ants) {
       if (!ant.alive || !this.owns(ant)) continue;
-      const sprite = this.pool.next(this.walk[0]);
+      const sprite = this.pool.next(this.walk[0], ant.y);
       sprite.x = ant.x * cellSize + half;
       sprite.y = ant.y * cellSize + half;
 
